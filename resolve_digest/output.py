@@ -10,7 +10,9 @@ MONTH_NAMES = (
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 )
 DEFAULT_OUTPUT_ROOT = Path("Z:/Workspace/Дайджест на экраны")
-DAY_MONTH_RE = re.compile(r"(?<!\d)(\d{1,2})\s+(\d{1,2})(?!\d)")
+# Digest names commonly use spaces or underscores, e.g. ``11 09`` and
+# ``Daydzhest_11_09``.  A hyphen is accepted as well.
+DAY_MONTH_RE = re.compile(r"(?<!\d)(\d{1,2})[\s_-]+(\d{1,2})(?!\d)")
 
 
 def _creation_year(path: Path) -> int:

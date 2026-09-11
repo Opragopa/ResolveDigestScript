@@ -22,3 +22,10 @@ class OutputTests(unittest.TestCase):
             path.write_bytes(b"")
             with self.assertRaises(ValueError):
                 digest_output_directory(path)
+
+    def test_accepts_underscore_separator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Daydzhest_11_09.docx"
+            path.write_bytes(b"")
+            result = digest_output_directory(path)
+            self.assertEqual(result.parts[-2:], ("09_Сентябрь", "11 09"))
