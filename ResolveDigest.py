@@ -1,0 +1,84 @@
+"""DaVinci Resolve menu entry point for Resolve Digest.
+
+Put this file together with the ``resolve_digest`` directory into Resolve's
+``Fusion/Scripts/Utility/ResolveDigest`` folder.  It intentionally has no CLI
+arguments: all input is collected in Resolve.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+if str(SCRIPT_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIRECTORY))
+
+
+def _message(comp, title: str, text: str) -> None:
+    """Resolve has no stable cross-version alert API; AskUser is reliable."""
+    print(f"{title}: {text}")
+    comp.AskUser(title, {
+        1.0: {"ID": "message", "Name": text, "Type": "Text", "Default": "Нажмите OK, чтобы закрыть."},
+    })
+
+
+def _ask_options(comp):
+    return comp.AskUser("Собрать выпуск из DOCX", {
+        1.0: {
+            "ID": "docx", "Name": "DOCX с 6 новостями", "Type": "FileBrowse",
+            "Default": "", "FileMask": "DOCX (*.docx)",
+        },
+        2.0: {
+            "ID": "cache", "Name": "Папка для загруженных фото", "Type": "PathBrowse",
+            "Default": str(SCRIPT_DIRECTORY / "cache"),
+        },
+        3.0: {
+            "ID": "clip_name", "Name": "Имя Fusion Clip (необязательно)", "Type": "Text",
+            "Default": "",
+        },
+    })
+
+
+def run() -> None:
+    # Imports live here so a missing Python package is shown as a useful Resolve
+    # dialog rather than a silent failure while the Scripts menu is loading.
+    try:
+        from resolve_digest.article_images import download_article_image
+        from resolve_digest.docx_parser import parse_docx
+        from resolve_digest.fusion import current_timeline_composition, update_composition
+        from resolve_digest.models import DownloadedArticle
+    except ImportError as error:
+        print(f"Resolve Digest: missing dependency: {error}")
+        return
+
+    try:
+        comp = current_timeline_composition()
+        options = _ask_options(comp)
+        if not options:
+            return
+        docx_path = Path(options["docx"])
+        if not docx_path.is_file():
+            _message(comp, "Resolve Digest", "Выберите существующий DOCX-файл.")
+            return
+        articles = parse_docx(docx_path)
+        cache = Path(options["cache"])
+        downloaded = []
+        for index, article in enumerate(articles, start=1):
+            image_path = cache / f"news_{index:02d}.jpg"
+            image_url = download_article_image(article.url, article.photo_number, image_path)
+            downloaded.append(DownloadedArticle(article, image_path, image_url))
+            print(f"Resolve Digest: {index}/6 downloaded {image_path}")
+        clip_name = options["clip_name"].strip() or None
+        update_composition(current_timeline_composition(clip_name), downloaded)
+        _message(comp, "Resolve Digest", "Готово: шесть новостей обновлены.")
+    except Exception as error:
+        # Nothing is hidden: the exact cause is also printed in Resolve's console.
+        print(f"Resolve Digest ERROR: {error}")
+        try:
+            _message(comp, "Resolve Digest — ошибка", str(error))
+        except Exception:
+            pass
+
+
+run()
