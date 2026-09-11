@@ -54,8 +54,9 @@ def update_composition(comp, articles: list[DownloadedArticle]) -> None:
             image.SetInput("Clip", str(Path(item.image_path).resolve()))
             # A still image must remain a still in Fusion.  Without explicit
             # trim bounds Resolve may treat the Loader input as a sequence.
-            image.SetInput("ClipTimeStart", 0)
-            image.SetInput("ClipTimeEnd", 0)
+            frame = index - 1
+            image.SetInput("ClipTimeStart", frame)
+            image.SetInput("ClipTimeEnd", frame)
     finally:
         comp.Unlock()
 
