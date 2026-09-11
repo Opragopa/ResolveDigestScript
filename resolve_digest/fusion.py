@@ -50,7 +50,12 @@ def update_composition(comp, articles: list[DownloadedArticle]) -> None:
             # slot.  Uppercase is intentional for the on-screen title style.
             _find_required(comp, f"title_{suffix}").SetInput("StyledText", item.article.title.upper())
             _find_required(comp, f"body_{suffix}").SetInput("StyledText", item.article.body)
-            _find_required(comp, f"image_{suffix}").SetInput("Clip", str(Path(item.image_path).resolve()))
+            image = _find_required(comp, f"image_{suffix}")
+            image.SetInput("Clip", str(Path(item.image_path).resolve()))
+            # A still image must remain a still in Fusion.  Without explicit
+            # trim bounds Resolve may treat the Loader input as a sequence.
+            image.SetInput("ClipTimeStart", 0)
+            image.SetInput("ClipTimeEnd", 0)
     finally:
         comp.Unlock()
 

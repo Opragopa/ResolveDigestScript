@@ -40,6 +40,8 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(comp.nodes["title_01"].values["StyledText"], "TITLE 1")
         self.assertEqual(comp.nodes["body_05"].values["StyledText"], "Body 5")
         self.assertTrue(comp.nodes["image_02"].values["Clip"].endswith("news_02.jpg"))
+        self.assertEqual(comp.nodes["image_02"].values["ClipTimeStart"], 0)
+        self.assertEqual(comp.nodes["image_02"].values["ClipTimeEnd"], 0)
         self.assertFalse(comp.locked)
 
     def test_each_image_uses_matching_news_slot(self):
