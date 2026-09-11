@@ -7,6 +7,7 @@ arguments: all input is collected in Resolve.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -62,6 +63,33 @@ def _message(comp, title: str, text: str) -> None:
 
 def _ask_options(comp):
     """Use a standard foreground file chooser whenever Resolve provides Qt."""
+    if os.name == "nt":
+        # Resolve's embedded UI can restore a Fusion window at an unreachable
+        # coordinate.  WinForms' OpenFileDialog is a real Windows dialog and
+        # Windows places it on the active desktop instead.
+        powershell = r'''Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = "Resolve Digest — выберите DOCX с 5 новостями"
+$dialog.Filter = "Документы Word (*.docx)|*.docx"
+$dialog.InitialDirectory = [Environment]::GetFolderPath('MyDocuments')
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    [Console]::Out.Write($dialog.FileName)
+}'''
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-STA", "-Command", powershell],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        docx_path = result.stdout.strip()
+        if not docx_path:
+            return None
+        document = Path(docx_path)
+        return {
+            "docx": str(document),
+            "cache": str(document.parent / "ResolveDigestCache"),
+            "clip_name": "",
+        }
     try:
         from PySide2.QtCore import Qt
         from PySide2.QtWidgets import QApplication, QFileDialog
