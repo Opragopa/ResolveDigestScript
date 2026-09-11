@@ -9,7 +9,7 @@ MONTH_NAMES = (
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 )
-DEFAULT_OUTPUT_ROOT = Path("Z:/Workspace")
+DEFAULT_OUTPUT_ROOT = Path("Z:/Workspace/Дайджест на экраны")
 DAY_MONTH_RE = re.compile(r"(?<!\d)(\d{1,2})\s+(\d{1,2})(?!\d)")
 
 
