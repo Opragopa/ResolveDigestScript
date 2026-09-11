@@ -13,7 +13,9 @@ from docx import Document
 from .models import Article
 
 URL_RE = re.compile(r"https?://[^\s)>]+", re.IGNORECASE)
-PHOTO_RE = re.compile(r"\(\s*(?:фото|photo)\s*№?\s*(\d+)\s*\)", re.IGNORECASE)
+# Editorial documents have appeared in all of these forms: `(фото 2)`,
+# `Фото №2`, and `photo 2`.  Word often also moves that line before the URL.
+PHOTO_RE = re.compile(r"(?:\(\s*)?\b(?:фото|photo)\s*(?:№|N|#)?\s*(\d+)\b\s*\)?", re.IGNORECASE)
 
 
 class DocumentFormatError(ValueError):
@@ -32,45 +34,54 @@ def parse_docx(path: Path, expected_count: int = 6) -> list[Article]:
     articles: list[Article] = []
     pending: list[str] = []
     pending_url: str | None = None
+    pending_photo_number: int | None = None
+
+    def add_article(url: str, photo_number: int) -> None:
+        nonlocal pending, pending_photo_number
+        if not pending:
+            raise DocumentFormatError(f"No title before URL: {url}")
+        # Marker-only paragraphs are metadata, never part of the description.
+        content = [_clean(PHOTO_RE.sub("", text)) for text in pending]
+        content = [text for text in content if text]
+        if not content:
+            raise DocumentFormatError(f"No title before URL: {url}")
+        title, *body_paragraphs = content
+        body = "\n".join(body_paragraphs).strip()
+        if not body:
+            raise DocumentFormatError(f"No body text for: {title}")
+        articles.append(Article(title, body, url, photo_number))
+        pending = []
+        pending_photo_number = None
 
     for paragraph in paragraphs:
         url_match = URL_RE.search(paragraph)
         photo_match = PHOTO_RE.search(paragraph)
         if pending_url:
-            # In the editorial template the URL commonly occupies one paragraph
-            # and `(фото N)` the following one.
-            if not photo_match:
+            # Allow captions/empty editor lines between a URL and the marker.
+            # A second URL proves the prior news block is incomplete.
+            if url_match:
                 raise DocumentFormatError(
-                    f"Found an article URL without a following '(фото N)': {pending_url}"
+                    f"Found an article URL without a corresponding photo number: {pending_url}"
                 )
-            if not pending:
-                raise DocumentFormatError(f"No title before URL: {pending_url}")
-            title, *body_paragraphs = pending
-            body = "\n".join(body_paragraphs).strip()
-            if not body:
-                raise DocumentFormatError(f"No body text for: {title}")
-            articles.append(Article(title, body, pending_url, int(photo_match.group(1))))
-            pending = []
-            pending_url = None
+            if photo_match:
+                add_article(pending_url, int(photo_match.group(1)))
+                pending_url = None
             continue
         if not url_match:
             pending.append(paragraph)
+            if photo_match:
+                pending_photo_number = int(photo_match.group(1))
             continue
-        if not photo_match:
+        if photo_match:
+            add_article(url_match.group(0), int(photo_match.group(1)))
+        elif pending_photo_number is not None:
+            # The marker is commonly written immediately before the source URL.
+            add_article(url_match.group(0), pending_photo_number)
+        else:
             pending_url = url_match.group(0)
-            continue
-        if not pending:
-            raise DocumentFormatError(f"No title before URL: {url_match.group(0)}")
-
-        title, *body_paragraphs = pending
-        body = "\n".join(body_paragraphs).strip()
-        if not body:
-            raise DocumentFormatError(f"No body text for: {title}")
-        articles.append(Article(title, body, url_match.group(0), int(photo_match.group(1))))
-        pending = []
 
     if pending_url:
-        raise DocumentFormatError(f"Found an article URL without '(фото N)': {pending_url}")
+        raise DocumentFormatError(f"Found an article URL without a corresponding photo number: {pending_url}")
     if pending:
         raise DocumentFormatError("Text after the last news block has no URL and photo marker")
     if len(articles) != expected_count:

@@ -41,3 +41,18 @@ class DocxParserTests(unittest.TestCase):
             document.add_paragraph(f"(фото {number})")
         document.save(path)
         self.assertEqual(parse_docx(path)[3].photo_number, 4)
+
+    def test_accepts_photo_before_url_without_parentheses(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "news.docx"
+        document = Document()
+        for number in range(1, 7):
+            document.add_paragraph(f"Title {number}")
+            document.add_paragraph(f"Body {number}")
+            document.add_paragraph(f"Фото №{number}")
+            document.add_paragraph(f"https://example.test/news/{number}")
+        document.save(path)
+        articles = parse_docx(path)
+        self.assertEqual(articles[0].photo_number, 1)
+        self.assertEqual(articles[0].body, "Body 1")
