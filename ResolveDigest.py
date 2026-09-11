@@ -47,14 +47,40 @@ if str(SCRIPT_DIRECTORY) not in sys.path:
 
 
 def _message(comp, title: str, text: str) -> None:
-    """Resolve has no stable cross-version alert API; AskUser is reliable."""
+    """Prefer a visible system dialog; retain Fusion's dialog as a fallback."""
     print(f"{title}: {text}")
+    try:
+        from PySide2.QtWidgets import QMessageBox
+        QMessageBox.information(None, title, text)
+        return
+    except ImportError:
+        pass
     comp.AskUser(title, {
         1.0: {"ID": "message", "Name": text, "Type": "Text", "Default": "Нажмите OK, чтобы закрыть."},
     })
 
 
 def _ask_options(comp):
+    """Use a standard foreground file chooser whenever Resolve provides Qt."""
+    try:
+        from PySide2.QtWidgets import QFileDialog
+        docx_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Resolve Digest — выберите DOCX с 5 новостями",
+            str(Path.home()),
+            "Документы Word (*.docx)",
+        )
+        if not docx_path:
+            return None
+        document = Path(docx_path)
+        return {
+            "docx": str(document),
+            "cache": str(document.parent / "ResolveDigestCache"),
+            "clip_name": "",
+        }
+    except ImportError:
+        pass
+    # Older Resolve installations without Qt keep the previous Fusion dialog.
     return comp.AskUser("Собрать выпуск из DOCX", {
         1.0: {
             "ID": "docx", "Name": "DOCX с 5 новостями", "Type": "FileBrowse",
