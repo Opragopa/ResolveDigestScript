@@ -15,7 +15,7 @@ class Node:
 
 class Composition:
     def __init__(self, missing=None):
-        self.nodes = {f"{kind}_{index:02d}": Node() for kind in ("title", "body", "image") for index in range(1, 7)}
+        self.nodes = {f"{kind}_{index:02d}": Node() for kind in ("title", "body", "image") for index in range(1, 6)}
         self.nodes.pop(missing, None)
         self.locked = False
 
@@ -30,7 +30,7 @@ class Composition:
 
 
 def articles():
-    return [DownloadedArticle(Article(f"Title {i}", f"Body {i}", "https://example.test", 1), Path(f"/tmp/news_{i:02d}.jpg"), "") for i in range(1, 7)]
+    return [DownloadedArticle(Article(f"Title {i}", f"Body {i}", "https://example.test", 1), Path(f"/tmp/news_{i:02d}.jpg"), "") for i in range(1, 6)]
 
 
 class FusionTests(unittest.TestCase):
@@ -38,7 +38,7 @@ class FusionTests(unittest.TestCase):
         comp = Composition()
         update_composition(comp, articles())
         self.assertEqual(comp.nodes["title_01"].values["StyledText"], "Title 1")
-        self.assertEqual(comp.nodes["body_06"].values["StyledText"], "Body 6")
+        self.assertEqual(comp.nodes["body_05"].values["StyledText"], "Body 5")
         self.assertTrue(comp.nodes["image_02"].values["Clip"].endswith("news_02.jpg"))
         self.assertFalse(comp.locked)
 

@@ -26,7 +26,7 @@ def _message(comp, title: str, text: str) -> None:
 def _ask_options(comp):
     return comp.AskUser("Собрать выпуск из DOCX", {
         1.0: {
-            "ID": "docx", "Name": "DOCX с 6 новостями", "Type": "FileBrowse",
+            "ID": "docx", "Name": "DOCX с 5 новостями", "Type": "FileBrowse",
             "Default": "", "FileMask": "DOCX (*.docx)",
         },
         2.0: {
@@ -68,10 +68,10 @@ def run() -> None:
             image_path = cache / f"news_{index:02d}.jpg"
             image_url = download_article_image(article.url, article.photo_number, image_path)
             downloaded.append(DownloadedArticle(article, image_path, image_url))
-            print(f"Resolve Digest: {index}/6 downloaded {image_path}")
+            print(f"Resolve Digest: {index}/5 downloaded {image_path}")
         clip_name = options["clip_name"].strip() or None
         update_composition(current_timeline_composition(clip_name), downloaded)
-        _message(comp, "Resolve Digest", "Готово: шесть новостей обновлены.")
+        _message(comp, "Resolve Digest", "Готово: пять новостей обновлены.")
     except Exception as error:
         # Nothing is hidden: the exact cause is also printed in Resolve's console.
         print(f"Resolve Digest ERROR: {error}")

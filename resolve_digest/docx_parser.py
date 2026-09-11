@@ -26,7 +26,7 @@ def _clean(text: str) -> str:
     return " ".join(text.split())
 
 
-def parse_docx(path: Path, expected_count: int = 6) -> list[Article]:
+def parse_docx(path: Path, expected_count: int = 5) -> list[Article]:
     """Return articles in document order, rejecting ambiguous/incomplete input."""
     document = Document(str(path))
     paragraphs = [_clean(p.text) for p in document.paragraphs]
@@ -35,6 +35,7 @@ def parse_docx(path: Path, expected_count: int = 6) -> list[Article]:
     pending: list[str] = []
     pending_url: str | None = None
     pending_photo_number: int | None = None
+    after_url: list[str] = []
 
     def add_article(url: str, photo_number: int) -> None:
         nonlocal pending, pending_photo_number
@@ -60,13 +61,21 @@ def parse_docx(path: Path, expected_count: int = 6) -> list[Article]:
             # Allow captions/empty editor lines between a URL and the marker.
             # A second URL proves the prior news block is incomplete.
             if url_match:
-                raise DocumentFormatError(
-                    f"Found an article URL without a corresponding photo number: {pending_url}"
-                )
-            if photo_match:
-                add_article(pending_url, int(photo_match.group(1)))
+                # The document author omitted a marker for the preceding item.
+                # Finalize it with the agreed default; text encountered after
+                # that URL belongs to the next item and must be retained.
+                add_article(pending_url, 1)
+                pending = after_url
+                after_url = []
                 pending_url = None
-            continue
+            else:
+                if photo_match:
+                    add_article(pending_url, int(photo_match.group(1)))
+                    after_url = []
+                    pending_url = None
+                else:
+                    after_url.append(paragraph)
+                continue
         if not url_match:
             pending.append(paragraph)
             if photo_match:
@@ -81,7 +90,8 @@ def parse_docx(path: Path, expected_count: int = 6) -> list[Article]:
             pending_url = url_match.group(0)
 
     if pending_url:
-        raise DocumentFormatError(f"Found an article URL without a corresponding photo number: {pending_url}")
+        # A final article can end immediately after its source URL.
+        add_article(pending_url, 1)
     if pending:
         raise DocumentFormatError("Text after the last news block has no URL and photo marker")
     if len(articles) != expected_count:

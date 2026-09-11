@@ -11,7 +11,7 @@ from .models import DownloadedArticle
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Fill a six-news Fusion template from a DOCX file.")
+    parser = argparse.ArgumentParser(description="Fill a five-news Fusion template from a DOCX file.")
     parser.add_argument("docx", type=Path)
     parser.add_argument("--cache", type=Path, default=Path("cache"))
     parser.add_argument("--clip-name", help="Optional exact timeline clip name containing the Fusion comp")
@@ -24,12 +24,12 @@ def main() -> int:
             path = args.cache / f"news_{index:02d}.jpg"
             image_url = download_article_image(article.url, article.photo_number, path)
             downloaded.append(DownloadedArticle(article, path, image_url))
-            print(f"[{index}/6] downloaded photo #{article.photo_number}: {path}")
+            print(f"[{index}/5] downloaded photo #{article.photo_number}: {path}")
         if args.dry_run:
-            print("READY: DOCX and all six images are valid; Resolve was not changed.")
+            print("READY: DOCX and all five images are valid; Resolve was not changed.")
             return 0
         update_composition(current_timeline_composition(args.clip_name), downloaded)
-        print("DONE: six title/body/image groups updated in Fusion.")
+        print("DONE: five title/body/image groups updated in Fusion.")
         return 0
     except (DocumentFormatError, RuntimeError, OSError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

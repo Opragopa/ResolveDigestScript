@@ -20,21 +20,21 @@ class DocxParserTests(unittest.TestCase):
         document.save(path)
         return path
 
-    def test_parses_six_blocks(self):
-        articles = parse_docx(self.make_docx(6))
+    def test_parses_five_blocks(self):
+        articles = parse_docx(self.make_docx(5))
         self.assertEqual(articles[0].title, "Title 1")
-        self.assertEqual(articles[5].photo_number, 6)
+        self.assertEqual(articles[4].photo_number, 5)
 
     def test_rejects_wrong_count(self):
         with self.assertRaises(DocumentFormatError):
-            parse_docx(self.make_docx(5))
+            parse_docx(self.make_docx(4))
 
     def test_accepts_url_and_photo_in_separate_paragraphs(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         path = Path(directory.name) / "news.docx"
         document = Document()
-        for number in range(1, 7):
+        for number in range(1, 6):
             document.add_paragraph(f"Title {number}")
             document.add_paragraph(f"Body {number}")
             document.add_paragraph(f"https://example.test/news/{number}")
@@ -47,7 +47,7 @@ class DocxParserTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         path = Path(directory.name) / "news.docx"
         document = Document()
-        for number in range(1, 7):
+        for number in range(1, 6):
             document.add_paragraph(f"Title {number}")
             document.add_paragraph(f"Body {number}")
             document.add_paragraph(f"Фото №{number}")
@@ -56,3 +56,19 @@ class DocxParserTests(unittest.TestCase):
         articles = parse_docx(path)
         self.assertEqual(articles[0].photo_number, 1)
         self.assertEqual(articles[0].body, "Body 1")
+
+    def test_defaults_to_first_photo_when_marker_is_missing(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "news.docx"
+        document = Document()
+        for number in range(1, 6):
+            document.add_paragraph(f"Title {number}")
+            document.add_paragraph(f"Body {number}")
+            document.add_paragraph(f"https://example.test/news/{number}")
+            if number != 3:
+                document.add_paragraph(f"(фото {number})")
+        document.save(path)
+        articles = parse_docx(path)
+        self.assertEqual(len(articles), 5)
+        self.assertEqual(articles[2].photo_number, 1)
