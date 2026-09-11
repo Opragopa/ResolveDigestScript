@@ -6,6 +6,7 @@ arguments: all input is collected in Resolve.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -17,13 +18,27 @@ def _script_directory() -> Path:
     except NameError:
         # `Scripts:/` is Resolve/Fusion's documented path map.  This branch is
         # used only when the script is selected from Workspace > Scripts.
-        import DaVinciResolveScript as dvr
-        resolve = dvr.scriptapp("Resolve")
-        fusion = resolve.Fusion() if resolve else None
-        directory = fusion.MapPath("Scripts:/Utility/ResolveDigest") if fusion else None
-        if not directory:
+        fusion = globals().get("fusion")
+        if fusion is None:
+            # Resolve's menu runner does not always populate PYTHONPATH.  Add
+            # its documented Windows API module location before importing.
+            program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+            api_modules = program_data / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Developer" / "Scripting" / "Modules"
+            if str(api_modules) not in sys.path:
+                sys.path.insert(0, str(api_modules))
+            import DaVinciResolveScript as dvr
+            resolve = dvr.scriptapp("Resolve")
+            fusion = resolve.Fusion() if resolve else None
+        scripts_utility = fusion.MapPath("Scripts:/Utility") if fusion else None
+        if not scripts_utility:
             raise RuntimeError("Cannot determine the Resolve Scripts folder.")
-        return Path(directory)
+        # Both names are supported because older setup instructions used the
+        # shorter folder name, while this repository is ResolveDigestScript.
+        for folder_name in ("ResolveDigestScript", "ResolveDigest"):
+            candidate = Path(scripts_utility) / folder_name
+            if (candidate / "resolve_digest").is_dir():
+                return candidate
+        raise RuntimeError("ResolveDigestScript folder was not found under Scripts:/Utility.")
 
 
 SCRIPT_DIRECTORY = _script_directory()
