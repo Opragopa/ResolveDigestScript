@@ -37,10 +37,16 @@ class FusionTests(unittest.TestCase):
     def test_updates_only_reserved_inputs(self):
         comp = Composition()
         update_composition(comp, articles())
-        self.assertEqual(comp.nodes["title_01"].values["StyledText"], "Title 1")
+        self.assertEqual(comp.nodes["title_01"].values["StyledText"], "TITLE 1")
         self.assertEqual(comp.nodes["body_05"].values["StyledText"], "Body 5")
         self.assertTrue(comp.nodes["image_02"].values["Clip"].endswith("news_02.jpg"))
         self.assertFalse(comp.locked)
+
+    def test_each_image_uses_matching_news_slot(self):
+        comp = Composition()
+        update_composition(comp, articles())
+        for index in range(1, 6):
+            self.assertTrue(comp.nodes[f"image_{index:02d}"].values["Clip"].endswith(f"news_{index:02d}.jpg"))
 
     def test_unlocks_when_template_is_invalid(self):
         comp = Composition("image_03")

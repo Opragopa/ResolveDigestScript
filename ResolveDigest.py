@@ -87,7 +87,6 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         document = Path(docx_path)
         return {
             "docx": str(document),
-            "cache": str(document.parent / "ResolveDigestCache"),
             "clip_name": "",
         }
     try:
@@ -113,7 +112,6 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         document = Path(dialog.selectedFiles()[0])
         return {
             "docx": str(document),
-            "cache": str(document.parent / "ResolveDigestCache"),
             "clip_name": "",
         }
     except ImportError:
@@ -125,10 +123,6 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
             "Default": "", "FileMask": "DOCX (*.docx)",
         },
         2.0: {
-            "ID": "cache", "Name": "Папка для загруженных фото", "Type": "PathBrowse",
-            "Default": str(SCRIPT_DIRECTORY / "cache"),
-        },
-        3.0: {
             "ID": "clip_name", "Name": "Имя Fusion Clip (необязательно)", "Type": "Text",
             "Default": "",
         },
@@ -141,8 +135,9 @@ def run() -> None:
     try:
         from resolve_digest.article_images import download_article_image
         from resolve_digest.docx_parser import parse_docx
-        from resolve_digest.fusion import current_timeline_composition, update_composition
+        from resolve_digest.fusion import current_timeline_composition, render_current_timeline, update_composition
         from resolve_digest.models import DownloadedArticle
+        from resolve_digest.output import digest_output_directory
     except ImportError as error:
         print(f"Resolve Digest: missing dependency: {error}")
         return
@@ -157,7 +152,7 @@ def run() -> None:
             _message(comp, "Resolve Digest", "Выберите существующий DOCX-файл.")
             return
         articles = parse_docx(docx_path)
-        cache = Path(options["cache"])
+        cache = digest_output_directory(docx_path)
         downloaded = []
         for index, article in enumerate(articles, start=1):
             image_path = cache / f"news_{index:02d}.jpg"
@@ -166,6 +161,7 @@ def run() -> None:
             print(f"Resolve Digest: {index}/5 downloaded {image_path}")
         clip_name = options["clip_name"].strip() or None
         update_composition(current_timeline_composition(clip_name), downloaded)
+        render_current_timeline(cache, "дайджест на экраны")
         _message(comp, "Resolve Digest", "Готово: пять новостей обновлены.")
     except Exception as error:
         # Nothing is hidden: the exact cause is also printed in Resolve's console.

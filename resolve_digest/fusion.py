@@ -41,23 +41,50 @@ def _find_required(comp, node_name: str):
 
 
 def update_composition(comp, articles: list[DownloadedArticle]) -> None:
-    """Replace six reserved node groups, leaving the Fusion graph untouched."""
+    """Replace five reserved node groups, leaving the Fusion graph untouched."""
     comp.Lock()
     try:
         for index, item in enumerate(articles, start=1):
             suffix = f"{index:02d}"
-            _find_required(comp, f"title_{suffix}").SetInput("StyledText", item.article.title)
+            # Keep each article's title/body/photo bound to the same numeric
+            # slot.  Uppercase is intentional for the on-screen title style.
+            _find_required(comp, f"title_{suffix}").SetInput("StyledText", item.article.title.upper())
             _find_required(comp, f"body_{suffix}").SetInput("StyledText", item.article.body)
             _find_required(comp, f"image_{suffix}").SetInput("Clip", str(Path(item.image_path).resolve()))
     finally:
         comp.Unlock()
 
 
-def current_timeline_composition(clip_name: str | None = None):
+def current_project():
     dvr = _resolve_api()
     resolve = dvr.scriptapp("Resolve")
     project = resolve.GetProjectManager().GetCurrentProject() if resolve else None
-    timeline = project.GetCurrentTimeline() if project else None
+    if not project:
+        raise ResolveUpdateError("Open the target Resolve project first.")
+    return project
+
+
+def render_current_timeline(output_dir: Path, preset_name: str) -> None:
+    """Load a render preset and start a job for the current timeline."""
+    project = current_project()
+    timeline = project.GetCurrentTimeline()
+    if not timeline:
+        raise ResolveUpdateError("Open the target Resolve project and timeline first.")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if not project.LoadRenderPreset(preset_name):
+        raise ResolveUpdateError(f"Render preset not found: {preset_name}")
+    if not project.SetRenderSettings({"TargetDir": str(output_dir)}):
+        raise ResolveUpdateError(f"Could not set render output directory: {output_dir}")
+    job_id = project.AddRenderJob()
+    if not job_id:
+        raise ResolveUpdateError("Could not create Resolve render job.")
+    if not project.StartRendering([job_id]):
+        raise ResolveUpdateError("Could not start Resolve render job.")
+
+
+def current_timeline_composition(clip_name: str | None = None):
+    project = current_project()
+    timeline = project.GetCurrentTimeline()
     if not timeline:
         raise ResolveUpdateError("Open the target Resolve project and timeline first.")
     clips = timeline.GetItemListInTrack("video", 1) or []
