@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from resolve_digest.fusion import ResolveUpdateError, update_composition
+from resolve_digest.fusion import ResolveUpdateError, _load_render_preset, update_composition
 from resolve_digest.models import Article, DownloadedArticle
 
 
@@ -53,3 +53,13 @@ class FusionTests(unittest.TestCase):
         with self.assertRaises(ResolveUpdateError):
             update_composition(comp, articles())
         self.assertFalse(comp.locked)
+
+    def test_loads_preset_by_case_insensitive_name(self):
+        class Project:
+            def GetRenderPresetList(self):
+                return ["Дайджест на экраны"]
+
+            def LoadRenderPreset(self, name):
+                return name == "Дайджест на экраны"
+
+        self.assertEqual(_load_render_preset(Project(), "дайджест на экраны"), "Дайджест на экраны")

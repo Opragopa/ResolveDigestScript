@@ -64,6 +64,25 @@ def current_project():
     return project
 
 
+def _load_render_preset(project, requested_name: str) -> str:
+    """Load a preset, tolerating Resolve's case/whitespace differences."""
+    names = [requested_name]
+    get_presets = getattr(project, "GetRenderPresetList", None)
+    if callable(get_presets):
+        available = get_presets() or []
+        wanted = requested_name.casefold().strip()
+        names.extend(
+            name for name in available
+            if isinstance(name, str) and name.casefold().strip() == wanted and name not in names
+        )
+    for name in names:
+        # Some Resolve versions return None on success; only an explicit
+        # False means that the preset could not be loaded.
+        if project.LoadRenderPreset(name) is not False:
+            return name
+    raise ResolveUpdateError(f"Render preset not found: {requested_name}")
+
+
 def render_current_timeline(output_dir: Path, preset_name: str) -> None:
     """Load a render preset and start a job for the current timeline."""
     project = current_project()
@@ -71,9 +90,8 @@ def render_current_timeline(output_dir: Path, preset_name: str) -> None:
     if not timeline:
         raise ResolveUpdateError("Open the target Resolve project and timeline first.")
     output_dir.mkdir(parents=True, exist_ok=True)
-    if not project.LoadRenderPreset(preset_name):
-        raise ResolveUpdateError(f"Render preset not found: {preset_name}")
-    if not project.SetRenderSettings({"TargetDir": str(output_dir)}):
+    _load_render_preset(project, preset_name)
+    if project.SetRenderSettings({"TargetDir": str(output_dir)}) is False:
         raise ResolveUpdateError(f"Could not set render output directory: {output_dir}")
     job_id = project.AddRenderJob()
     if not job_id:
