@@ -63,16 +63,26 @@ def _message(comp, title: str, text: str) -> None:
 def _ask_options(comp):
     """Use a standard foreground file chooser whenever Resolve provides Qt."""
     try:
-        from PySide2.QtWidgets import QFileDialog
-        docx_path, _ = QFileDialog.getOpenFileName(
-            None,
-            "Resolve Digest — выберите DOCX с 5 новостями",
-            str(Path.home()),
-            "Документы Word (*.docx)",
-        )
-        if not docx_path:
+        from PySide2.QtCore import Qt
+        from PySide2.QtWidgets import QApplication, QFileDialog
+        dialog = QFileDialog()
+        dialog.setWindowTitle("Resolve Digest — выберите DOCX с 5 новостями")
+        dialog.setDirectory(str(Path.home()))
+        dialog.setNameFilter("Документы Word (*.docx)")
+        dialog.setFileMode(QFileDialog.ExistingFile)
+        # Native Windows dialogs can reopen at stale off-screen coordinates.
+        # The Qt dialog lets us reliably centre the window on the active screen.
+        dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowStaysOnTopHint)
+        dialog.resize(900, 650)
+        app = QApplication.instance()
+        screen = app.primaryScreen() if app else None
+        if screen:
+            available = screen.availableGeometry()
+            dialog.move(available.center() - dialog.rect().center())
+        if dialog.exec_() != QFileDialog.Accepted:
             return None
-        document = Path(docx_path)
+        document = Path(dialog.selectedFiles()[0])
         return {
             "docx": str(document),
             "cache": str(document.parent / "ResolveDigestCache"),
