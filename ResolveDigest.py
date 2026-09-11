@@ -10,7 +10,23 @@ import sys
 from pathlib import Path
 
 
-SCRIPT_DIRECTORY = Path(__file__).resolve().parent
+def _script_directory() -> Path:
+    """Resolve executes menu scripts with ``exec`` and omits ``__file__``."""
+    try:
+        return Path(__file__).resolve().parent
+    except NameError:
+        # `Scripts:/` is Resolve/Fusion's documented path map.  This branch is
+        # used only when the script is selected from Workspace > Scripts.
+        import DaVinciResolveScript as dvr
+        resolve = dvr.scriptapp("Resolve")
+        fusion = resolve.Fusion() if resolve else None
+        directory = fusion.MapPath("Scripts:/Utility/ResolveDigest") if fusion else None
+        if not directory:
+            raise RuntimeError("Cannot determine the Resolve Scripts folder.")
+        return Path(directory)
+
+
+SCRIPT_DIRECTORY = _script_directory()
 if str(SCRIPT_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
