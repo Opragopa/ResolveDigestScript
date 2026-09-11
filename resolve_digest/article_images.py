@@ -15,6 +15,16 @@ class ImageExtractionError(RuntimeError):
     pass
 
 
+def _client(session: requests.Session | None = None) -> requests.Session:
+    """Return a session that never inherits proxy settings from the host."""
+    client = session or requests.Session()
+    # Equivalent to running requests with a "no proxy" flag.  Resolve can
+    # inherit SOCKS_PROXY/HTTPS_PROXY from macOS or a launcher; Requests then
+    # tries to load PySocks even though this script must make direct requests.
+    client.trust_env = False
+    return client
+
+
 def _is_image_url(value: str) -> bool:
     return urlparse(value).path.lower().endswith(IMAGE_EXTENSIONS)
 
@@ -37,7 +47,7 @@ def article_image_urls(article_url: str, session: requests.Session | None = None
     The selectors intentionally prefer SPbPU article containers and only fall
     back to ``article``.  This prevents site chrome/logo images being counted.
     """
-    client = session or requests.Session()
+    client = _client(session)
     response = client.get(article_url, headers=HEADERS, timeout=30)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
@@ -61,7 +71,7 @@ def download_article_image(article_url: str, photo_number: int, destination: Pat
                            session: requests.Session | None = None) -> str:
     if photo_number < 1:
         raise ImageExtractionError("Photo number must be at least 1")
-    client = session or requests.Session()
+    client = _client(session)
     urls = article_image_urls(article_url, client)
     if photo_number > len(urls):
         raise ImageExtractionError(
