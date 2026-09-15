@@ -135,7 +135,7 @@ def run() -> None:
     try:
         from resolve_digest.article_images import download_article_image
         from resolve_digest.docx_parser import parse_docx
-        from resolve_digest.fusion import current_timeline_composition, render_current_timeline, update_composition
+        from resolve_digest.fusion import current_timeline_composition, update_composition
         from resolve_digest.models import DownloadedArticle
         from resolve_digest.output import digest_output_directory
     except ImportError as error:
@@ -161,8 +161,7 @@ def run() -> None:
             print(f"Resolve Digest: {index}/5 downloaded {image_path}")
         clip_name = options["clip_name"].strip() or None
         update_composition(current_timeline_composition(clip_name), downloaded)
-        render_current_timeline(cache, "дайджест на экраны")
-        _message(comp, "Resolve Digest", "Готово: пять новостей обновлены.")
+        _message(comp, "Resolve Digest", "Готово: пять новостей обновлены. Рендер запустите в Deliver вручную.")
     except Exception as error:
         # Nothing is hidden: the exact cause is also printed in Resolve's console.
         print(f"Resolve Digest ERROR: {error}")

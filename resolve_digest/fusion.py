@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import math
+import re
 import sys
 from pathlib import Path
 
@@ -10,6 +12,98 @@ from .models import DownloadedArticle
 
 class ResolveUpdateError(RuntimeError):
     pass
+
+
+# A non-breaking space is supported by Text+ and is more reliable there than a
+# manual newline: Fusion may reflow text after a frame or font change.
+_RUSSIAN_PREPOSITION = re.compile(
+    r"(?iu)(?<![\w\u00A0])"
+    r"(в|во|к|ко|с|со|у|о|об|обо|от|до|на|за|по|из|изо|"
+    r"для|без|над|под|перед|при|про|через|между)"
+    r"[ \t]+(?=\S)"
+)
+
+
+def prevent_hanging_russian_prepositions(text: str) -> str:
+    """Keep a Russian preposition with the following word during Text+ reflow."""
+    return _RUSSIAN_PREPOSITION.sub(lambda match: f"{match.group(1)}\u00a0", text)
+
+
+def _input_value(tool, name: str):
+    """Read a Fusion input while keeping the adapter usable in unit tests."""
+    getter = getattr(tool, "GetInput", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter(name)
+    except TypeError:
+        return getter(name, 0)
+
+
+def _number(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _composition_size(comp) -> tuple[float, float]:
+    """Return frame dimensions, with HD as a conservative API-free fallback."""
+    prefs = getattr(comp, "GetPrefs", None)
+    if callable(prefs):
+        try:
+            values = prefs() or {}
+        except TypeError:
+            values = {}
+        width = _number(values.get("Comp.FrameFormat.Width"))
+        height = _number(values.get("Comp.FrameFormat.Height"))
+        if width and height:
+            return width, height
+    return 1920.0, 1080.0
+
+
+def _base_text_size(tool) -> float | None:
+    """Persist the template size so repeated runs never progressively shrink it."""
+    current = _number(_input_value(tool, "Size"))
+    if current is None:
+        return None
+    get_data = getattr(tool, "GetData", None)
+    set_data = getattr(tool, "SetData", None)
+    key = "ResolveDigest.AutoScaleBaseSize"
+    stored = _number(get_data(key)) if callable(get_data) else None
+    if stored and stored > 0:
+        return stored
+    if callable(set_data):
+        set_data(key, current)
+    return current
+
+
+def auto_scale_text(tool, comp, text: str) -> float | None:
+    """Fit text approximately into this Text+'s existing frame.
+
+    Text+ exposes its frame as normalized Width/Height and font Size. Resolve
+    has no scripting API for glyph measurement, so a conservative estimate
+    uses average Cyrillic glyph width and line height. It only reduces Size.
+    """
+    box_width = _number(_input_value(tool, "Width"))
+    box_height = _number(_input_value(tool, "Height"))
+    base_size = _base_text_size(tool)
+    if not box_width or not box_height or not base_size or box_width <= 0 or box_height <= 0:
+        return None
+
+    frame_width, frame_height = _composition_size(comp)
+    available_width = box_width * frame_width
+    available_height = box_height * frame_height
+    glyphs = max(len(text.replace("\n", "")), 1)
+    font_pixels = base_size * frame_height
+    estimated_line_width = max(available_width / (font_pixels * 0.53), 1)
+    explicit_lines = max(text.count("\n") + 1, 1)
+    estimated_lines = max(math.ceil(glyphs / estimated_line_width), explicit_lines)
+    needed_height = estimated_lines * font_pixels * 1.22
+    scale = min(1.0, available_height / needed_height)
+    size = base_size * scale
+    tool.SetInput("Size", size)
+    return size
 
 
 def _resolve_api():
@@ -48,8 +142,14 @@ def update_composition(comp, articles: list[DownloadedArticle]) -> None:
             suffix = f"{index:02d}"
             # Keep each article's title/body/photo bound to the same numeric
             # slot.  Uppercase is intentional for the on-screen title style.
-            _find_required(comp, f"title_{suffix}").SetInput("StyledText", item.article.title.upper())
-            _find_required(comp, f"body_{suffix}").SetInput("StyledText", item.article.body)
+            title = _find_required(comp, f"title_{suffix}")
+            body = _find_required(comp, f"body_{suffix}")
+            title_text = prevent_hanging_russian_prepositions(item.article.title.upper())
+            body_text = prevent_hanging_russian_prepositions(item.article.body)
+            title.SetInput("StyledText", title_text)
+            body.SetInput("StyledText", body_text)
+            auto_scale_text(title, comp, title_text)
+            auto_scale_text(body, comp, body_text)
             image = _find_required(comp, f"image_{suffix}")
             image.SetInput("Clip", str(Path(item.image_path).resolve()))
             # A still image must remain a still in Fusion.  Without explicit
