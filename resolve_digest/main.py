@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .article_images import download_article_image
+from .article_images import download_all_article_images
 from .docx_parser import DocumentFormatError, parse_docx
 from .fusion import current_timeline_composition, update_composition
 from .models import DownloadedArticle
@@ -21,10 +21,27 @@ def main() -> int:
         articles = parse_docx(args.docx)
         downloaded: list[DownloadedArticle] = []
         for index, article in enumerate(articles, start=1):
-            path = args.cache / f"news_{index:02d}.jpg"
-            image_url = download_article_image(article.url, article.photo_number, path)
-            downloaded.append(DownloadedArticle(article, path, image_url))
-            print(f"[{index}/5] downloaded photo #{article.photo_number}: {path}")
+            paths, image_urls = download_all_article_images(
+                article.url, args.cache / f"news_{index:02d}"
+            )
+            selected_frame = article.photo_number - 1
+            if selected_frame >= len(paths):
+                raise RuntimeError(
+                    f"Requested photo #{article.photo_number}, but the article contains only "
+                    f"{len(paths)} photos: {article.url}"
+                )
+            downloaded.append(
+                DownloadedArticle(
+                    article,
+                    paths[0],
+                    image_urls[selected_frame],
+                    len(paths),
+                )
+            )
+            print(
+                f"[{index}/5] downloaded {len(paths)} photos; "
+                f"selected photo #{article.photo_number}: {paths[0].parent}"
+            )
         if args.dry_run:
             print("READY: DOCX and all five images are valid; Resolve was not changed.")
             return 0

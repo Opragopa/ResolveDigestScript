@@ -86,3 +86,32 @@ def download_article_image(article_url: str, photo_number: int, destination: Pat
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(response.content)
     return image_url
+
+
+def download_all_article_images(article_url: str, destination_dir: Path,
+                                session: requests.Session | None = None) -> tuple[list[Path], list[str]]:
+    """Download every content image as one zero-based Loader sequence.
+
+    Each article gets its own directory so Fusion cannot combine images from
+    different news items into the same numbered sequence.
+    """
+    client = _client(session)
+    urls = article_image_urls(article_url, client)
+    destination_dir.mkdir(parents=True, exist_ok=True)
+
+    # Do not let images left by an earlier run extend the new Loader sequence.
+    for stale in destination_dir.glob("photo_*.jpg"):
+        if stale.is_file():
+            stale.unlink()
+
+    paths: list[Path] = []
+    for frame, image_url in enumerate(urls):
+        response = client.get(image_url, headers=HEADERS, timeout=60)
+        response.raise_for_status()
+        content_type = response.headers.get("Content-Type", "").lower()
+        if content_type and not content_type.startswith("image/"):
+            raise ImageExtractionError(f"Selected URL is not an image ({content_type}): {image_url}")
+        path = destination_dir / f"photo_{frame:04d}.jpg"
+        path.write_bytes(response.content)
+        paths.append(path)
+    return paths, urls

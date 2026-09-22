@@ -15,3 +15,4 @@ class DownloadedArticle:
     article: Article
     image_path: Path
     image_url: str
+    image_count: int = 1

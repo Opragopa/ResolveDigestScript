@@ -151,10 +151,10 @@ def update_composition(comp, articles: list[DownloadedArticle]) -> None:
             auto_scale_text(title, comp, title_text)
             auto_scale_text(body, comp, body_text)
             image = _find_required(comp, f"image_{suffix}")
+            # Keep every downloaded photo available as a Loader sequence.
+            # Trim selects the requested frame but remains editable in Fusion.
             image.SetInput("Clip", str(Path(item.image_path).resolve()))
-            # A still image must remain a still in Fusion.  Without explicit
-            # trim bounds Resolve may treat the Loader input as a sequence.
-            frame = index - 1
+            frame = item.article.photo_number - 1
             image.SetInput("ClipTimeStart", frame)
             image.SetInput("ClipTimeEnd", frame)
     finally:
