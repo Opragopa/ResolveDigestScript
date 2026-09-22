@@ -60,8 +60,8 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(comp.nodes["title_01"].values["StyledText"], "TITLE 1")
         self.assertEqual(comp.nodes["body_05"].values["StyledText"], "Body 5")
         self.assertTrue(comp.nodes["image_02"].values["Clip"].endswith("news_02"))
-        self.assertEqual(comp.nodes["image_02"].values["ClipTimeStart"], 0)
-        self.assertEqual(comp.nodes["image_02"].values["ClipTimeEnd"], 0)
+        self.assertEqual(comp.nodes["image_02"].values["ClipTimeStart"], 1)
+        self.assertEqual(comp.nodes["image_02"].values["ClipTimeEnd"], 1)
         self.assertFalse(comp.locked)
 
     def test_prevents_hanging_russian_prepositions(self):
@@ -84,8 +84,8 @@ class FusionTests(unittest.TestCase):
         update_composition(comp, articles())
         for index in range(1, 6):
             self.assertTrue(comp.nodes[f"image_{index:02d}"].values["Clip"].endswith(f"news_{index:02d}"))
-            self.assertEqual(comp.nodes[f"image_{index:02d}"].values["ClipTimeStart"], 0)
-            self.assertEqual(comp.nodes[f"image_{index:02d}"].values["ClipTimeEnd"], 0)
+            self.assertEqual(comp.nodes[f"image_{index:02d}"].values["ClipTimeStart"], index - 1)
+            self.assertEqual(comp.nodes[f"image_{index:02d}"].values["ClipTimeEnd"], index - 1)
 
     def test_unlocks_when_template_is_invalid(self):
         comp = Composition("image_03")
