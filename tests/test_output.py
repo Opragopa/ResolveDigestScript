@@ -14,7 +14,7 @@ class OutputTests(unittest.TestCase):
             expected_year = path.stat().st_birthtime if hasattr(path.stat(), "st_birthtime") else path.stat().st_ctime
             year = __import__("datetime").datetime.fromtimestamp(expected_year).year
             result = digest_output_directory(path)
-            self.assertEqual(result, Path(f"Z:/Workspace/Дайджест на экраны/{year} year/09_Сентябрь/11 09"))
+            self.assertEqual(result, Path(f"Z:/Workspace/{year} year/Дайджест на экраны/09_Сентябрь/11 09"))
 
     def test_rejects_filename_without_day_month(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -9,7 +9,7 @@ MONTH_NAMES = (
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 )
-DEFAULT_OUTPUT_ROOT = Path("Z:/Workspace/Дайджест на экраны")
+DEFAULT_OUTPUT_ROOT = Path("Z:/Workspace")
 # Digest names commonly use spaces or underscores, e.g. ``11 09`` and
 # ``Daydzhest_11_09``.  A hyphen is accepted as well.
 DAY_MONTH_RE = re.compile(r"(?<!\d)(\d{1,2})[\s_-]+(\d{1,2})(?!\d)")
@@ -32,4 +32,4 @@ def digest_output_directory(path: Path, root: Path = DEFAULT_OUTPUT_ROOT) -> Pat
     year = _creation_year(path)
     month_folder = f"{month:02d}_{MONTH_NAMES[month - 1]}"
     digest_folder = f"{day:02d} {month:02d}"
-    return root / f"{year} year" / month_folder / digest_folder
+    return root / f"{year} year" / "Дайджест на экраны" / month_folder / digest_folder

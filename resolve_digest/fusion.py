@@ -154,9 +154,8 @@ def update_composition(comp, articles: list[DownloadedArticle]) -> None:
             # Keep every downloaded photo available as a Loader sequence.
             # Trim selects the requested frame but remains editable in Fusion.
             image.SetInput("Clip", str(Path(item.image_path).resolve()))
-            frame = item.article.photo_number - 1
-            image.SetInput("ClipTimeStart", frame)
-            image.SetInput("ClipTimeEnd", frame)
+            image.SetInput("ClipTimeStart", 0)
+            image.SetInput("ClipTimeEnd", 0)
     finally:
         comp.Unlock()
 

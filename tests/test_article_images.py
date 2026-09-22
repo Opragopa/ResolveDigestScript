@@ -43,7 +43,7 @@ class ArticleImageClientTests(unittest.TestCase):
             )
             self.assertEqual(
                 [path.name for path in paths],
-                ["photo_0000.jpg", "photo_0001.jpg"],
+                ["photo_01.jpg", "photo_02.jpg"],
             )
             self.assertEqual(len(urls), 2)
             self.assertEqual(paths[1].read_bytes(), b"https://example.test/b.jpg")

@@ -105,13 +105,13 @@ def download_all_article_images(article_url: str, destination_dir: Path,
             stale.unlink()
 
     paths: list[Path] = []
-    for frame, image_url in enumerate(urls):
+    for frame, image_url in enumerate(urls, start=1):
         response = client.get(image_url, headers=HEADERS, timeout=60)
         response.raise_for_status()
         content_type = response.headers.get("Content-Type", "").lower()
         if content_type and not content_type.startswith("image/"):
             raise ImageExtractionError(f"Selected URL is not an image ({content_type}): {image_url}")
-        path = destination_dir / f"photo_{frame:04d}.jpg"
+        path = destination_dir / f"photo_{frame:02d}.jpg"
         path.write_bytes(response.content)
         paths.append(path)
     return paths, urls
