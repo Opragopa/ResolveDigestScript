@@ -67,7 +67,7 @@ class FusionTests(unittest.TestCase):
     def test_prevents_hanging_russian_prepositions(self):
         self.assertEqual(
             prevent_hanging_russian_prepositions("В городе и на реке, через неделю."),
-            "В\u00a0городе и на\u00a0реке, через\u00a0неделю.",
+            "В\u00a0городе и\u00a0на\u00a0реке, через\u00a0неделю.",
         )
 
     def test_scales_from_text_box_and_keeps_template_size(self):
