@@ -133,7 +133,7 @@ def run() -> None:
     # Imports live here so a missing Python package is shown as a useful Resolve
     # dialog rather than a silent failure while the Scripts menu is loading.
     try:
-        from resolve_digest.article_images import download_article_image
+        from resolve_digest.article_images import download_all_article_images
         from resolve_digest.docx_parser import parse_docx
         from resolve_digest.fusion import current_timeline_composition, update_composition
         from resolve_digest.models import DownloadedArticle
@@ -155,10 +155,21 @@ def run() -> None:
         cache = digest_output_directory(docx_path)
         downloaded = []
         for index, article in enumerate(articles, start=1):
-            image_path = cache / f"news_{index:02d}.jpg"
-            image_url = download_article_image(article.url, article.photo_number, image_path)
-            downloaded.append(DownloadedArticle(article, image_path, image_url))
-            print(f"Resolve Digest: {index}/5 downloaded {image_path}")
+            news_dir = cache / f"news_{index:02d}"
+            image_paths, image_urls = download_all_article_images(article.url, news_dir)
+            selected_frame = article.photo_number - 1
+            if selected_frame >= len(image_paths):
+                raise RuntimeError(
+                    f"Requested photo #{article.photo_number}, but the article contains only "
+                    f"{len(image_paths)} photos: {article.url}"
+                )
+            downloaded.append(
+                DownloadedArticle(article, news_dir, image_urls[0], len(image_paths))
+            )
+            print(
+                f"Resolve Digest: {index}/5 downloaded {len(image_paths)} photos to {news_dir}; "
+                f"initial Trim={selected_frame}-{selected_frame}"
+            )
         clip_name = options["clip_name"].strip() or None
         update_composition(current_timeline_composition(clip_name), downloaded)
         _message(comp, "Resolve Digest", "Готово: пять новостей обновлены. Рендер запустите в Deliver вручную.")
