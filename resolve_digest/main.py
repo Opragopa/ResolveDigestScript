@@ -33,7 +33,7 @@ def main() -> int:
             downloaded.append(
                 DownloadedArticle(
                     article,
-                    paths[0].parent,
+                    paths[0],
                     image_urls[0],
                     len(paths),
                 )

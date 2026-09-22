@@ -164,7 +164,7 @@ def run() -> None:
                     f"{len(image_paths)} photos: {article.url}"
                 )
             downloaded.append(
-                DownloadedArticle(article, news_dir, image_urls[0], len(image_paths))
+                DownloadedArticle(article, image_paths[0], image_urls[0], len(image_paths))
             )
             print(
                 f"Resolve Digest: {index}/5 downloaded {len(image_paths)} photos to {news_dir}; "
