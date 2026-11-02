@@ -72,3 +72,21 @@ class DocxParserTests(unittest.TestCase):
         articles = parse_docx(path)
         self.assertEqual(len(articles), 5)
         self.assertEqual(articles[2].photo_number, 1)
+
+    def test_missing_marker_before_next_article_marker(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "news.docx"
+        document = Document()
+        for number in range(1, 6):
+            document.add_paragraph(f"Title {number}")
+            document.add_paragraph(f"Body {number}")
+            if number != 3:
+                document.add_paragraph(f"(фото {number})")
+            document.add_paragraph(f"https://example.test/news/{number}")
+        document.save(path)
+        articles = parse_docx(path)
+        self.assertEqual([(a.title, a.body, a.photo_number) for a in articles], [
+            (f"Title {n}", f"Body {n}", 1 if n == 3 else n)
+            for n in range(1, 6)
+        ])

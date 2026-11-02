@@ -70,7 +70,14 @@ def parse_docx(path: Path, expected_count: int = 5) -> list[Article]:
                 pending_url = None
             else:
                 if photo_match:
-                    add_article(pending_url, int(photo_match.group(1)))
+                    if len(after_url) >= 2:
+                        # A title and body after the URL indicate the next
+                        # article, whose marker precedes its own URL.
+                        add_article(pending_url, 1)
+                        pending = after_url + [paragraph]
+                        pending_photo_number = int(photo_match.group(1))
+                    else:
+                        add_article(pending_url, int(photo_match.group(1)))
                     after_url = []
                     pending_url = None
                 else:
@@ -93,7 +100,9 @@ def parse_docx(path: Path, expected_count: int = 5) -> list[Article]:
         # A final article can end immediately after its source URL.
         add_article(pending_url, 1)
     if pending:
-        raise DocumentFormatError("Text after the last news block has no URL and photo marker")
+        raise DocumentFormatError(
+            f"Text after the last news block has no URL: {pending[0][:120]}"
+        )
     if len(articles) != expected_count:
         raise DocumentFormatError(f"Expected exactly {expected_count} news items, found {len(articles)}")
     return articles
