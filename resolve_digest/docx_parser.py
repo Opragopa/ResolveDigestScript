@@ -26,10 +26,24 @@ def _clean(text: str) -> str:
     return " ".join(text.split())
 
 
+def _paragraph_text(paragraph) -> str:
+    """Include Word hyperlink targets, even when their display text omits the scheme."""
+    text = "".join(node.text or "" for node in paragraph._p.xpath(".//w:t"))
+    targets = []
+    for link in paragraph._p.xpath(".//w:hyperlink"):
+        relationship_id = link.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+        relationship = paragraph.part.rels.get(relationship_id)
+        if relationship is not None and relationship.is_external:
+            target = relationship.target_ref
+            if URL_RE.fullmatch(target) and target not in text:
+                targets.append(target)
+    return _clean(" ".join([text, *targets]))
+
+
 def parse_docx(path: Path, expected_count: int = 5) -> list[Article]:
     """Return articles in document order, rejecting ambiguous/incomplete input."""
     document = Document(str(path))
-    paragraphs = [_clean(p.text) for p in document.paragraphs]
+    paragraphs = [_paragraph_text(p) for p in document.paragraphs]
     paragraphs = [p for p in paragraphs if p]
     articles: list[Article] = []
     pending: list[str] = []

@@ -3,11 +3,37 @@ import unittest
 from pathlib import Path
 
 from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE
 
 from resolve_digest.docx_parser import DocumentFormatError, parse_docx
 
 
 class DocxParserTests(unittest.TestCase):
+    def test_reads_actual_word_hyperlink_target(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "news.docx"
+        document = Document()
+        document.add_paragraph("Title")
+        document.add_paragraph("Body")
+        paragraph = document.add_paragraph()
+        url = "https://example.test/news/1"
+        relationship_id = paragraph.part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), relationship_id)
+        run = OxmlElement("w:r")
+        text = OxmlElement("w:t")
+        text.text = "www.example.test/news/1"
+        run.append(text)
+        hyperlink.append(run)
+        paragraph._p.append(hyperlink)
+        paragraph.add_run(" (фото 3)")
+        document.save(path)
+        article = parse_docx(path, expected_count=1)[0]
+        self.assertEqual((article.url, article.photo_number), (url, 3))
+
     def make_docx(self, blocks: int) -> Path:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
