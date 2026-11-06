@@ -187,7 +187,7 @@ def _text_bounds(tool, frame):
     return rect
 
 
-def body_layout_plan(title, body, comp, title_name, gap_pixels, sample_frame=14):
+def body_layout_plan(title, body, comp, title_name, gap_pixels, sample_frame=14, photo_limits=None):
     """Measure before setting an expression; never reference body's own output.
 
     Supplied template: text is static, title/body share downstream transforms,
@@ -226,7 +226,142 @@ def body_layout_plan(title, body, comp, title_name, gap_pixels, sample_frame=14)
         f"Point({x:.12g}, {title_name}.Output.DataWindow[2] / "
         f"{title_name}.Output.Height - {gap / body_height:.12g} - ({top_offset:.12g}))"
     )
+    if photo_limits is not None:
+        bottom, top = photo_limits
+        lower = (bottom + body_rect[3] - body_rect[1]) / body_height - top_offset
+        upper = top / body_height - top_offset
+        desired = (f"{title_name}.Output.DataWindow[2] / {title_name}.Output.Height"
+                   f" - {gap / body_height:.12g} - ({top_offset:.12g})")
+        expression = f"Point({x:.12g}, min({upper:.12g}, max({lower:.12g}, {desired})))"
     return center_input, expression
+
+
+# Static photo transforms and final photo merges in the supplied template.
+PHOTO_BRANCHES = (
+    ("Transform2", "Transform6_2_2", "Merge2_1_3"),
+    ("Transform2_2", "Transform6_2", "Merge2_1_1_2_2"),
+    ("Transform2_2_1", "Transform6_2_1", "Merge2_1_1_2_2_1"),
+    ("Transform2_2_1_1", "Transform6_2_1_1", "Merge2_1_1_2_2_1_1"),
+    ("Transform2_2_1_1_1", "Transform6_2_1_1_1", "Merge2_1_1_2_2_1_1_1"),
+)
+
+
+def _at(tool, name, frame):
+    try:
+        return tool.GetInput(name, frame)
+    except TypeError:
+        return tool.GetInput(name)
+
+
+def photo_vertical_limits(comp, index, canvas_height):
+    """Map native photo DoD to the Merge background, pixel for pixel.
+
+    The template's animated transform only slides horizontally. The final
+    Merge is centred at size=1; differing foreground/background resolutions
+    require a half-height translation, not normalized scaling.
+    """
+    static_name, animation_name, merge_name = PHOTO_BRANCHES[index - 1]
+    static = _find_required(comp, static_name)
+    animation = _find_required(comp, animation_name)
+    merge = _find_required(comp, merge_name)
+    for node in (animation, merge):
+        size = _number(_input_value(node, "Size"))
+        angle = _number(_input_value(node, "Angle"))
+        if (size is not None and abs(size - 1) > 1e-8) or (angle is not None and abs(angle) > 1e-8):
+            raise ResolveUpdateError("Дополнительный поворот/масштаб фото требует настройки границ шаблона.")
+        for frame in (0, 14, 750, 1499):
+            center = _at(node, "Center", frame)
+            if center is not None and abs(_components(center, 2)[1] - .5) > 1e-8:
+                raise ResolveUpdateError("Вертикальное смещение фото в анимации/Merge не поддерживается этим шаблоном.")
+    output = getattr(static, "Output", None)
+    if not callable(getattr(output, "GetValue", None)):
+        raise ResolveUpdateError("Не удалось получить разрешение обработанной фотографии.")
+    image = output.GetValue(0, 0, 0)
+    native_height = _number(getattr(image, "Height", None))
+    if native_height is None or native_height <= 0:
+        raise ResolveUpdateError("Фотография не загружена на кадре 0: " + static_name)
+    rect = _text_bounds(static, 0)
+    shift = (canvas_height - native_height) / 2
+    bottom, top = max(0., rect[1] + shift), min(canvas_height, rect[3] + shift)
+    if top <= bottom:
+        raise ResolveUpdateError("Фотография находится за пределами кадра: " + static_name)
+    return bottom, top
+
+
+def fit_photo_text_pair(comp, title, body, index, gap):
+    """Fit both texts and requested gap within actual visible photo height."""
+    _, height = _text_frame_size(title, comp)
+    bottom, top = photo_vertical_limits(comp, index, height)
+    available = top - bottom
+    if gap >= available - 2:
+        raise ResolveUpdateError(f"Отступ {gap:g} px не помещается в высоту фото {available:g} px (новость {index}).")
+    for _ in range(16):
+        tr, br = _text_bounds(title, 14), _text_bounds(body, 14)
+        th, bh = tr[3] - tr[1], br[3] - br[1]
+        total = th + gap + bh
+        if total <= available - 2:
+            break
+        # Leave room for body even when the title alone is too tall.
+        node = title if th >= (available - gap) * .65 else body
+        current = _number(_input_value(node, "Size"))
+        room = (available - gap) * .55 if node is title else available - gap - th - 2
+        measured = th if node is title else bh
+        if current is None or room <= 0:
+            raise ResolveUpdateError("Не удалось подобрать размер текста в границах фото.")
+        size = max(.004, current * min(.9, .95 * room / measured))
+        if size >= current:
+            raise ResolveUpdateError(f"Текст новости {index} не помещается даже при минимальном Size. Уменьшите отступ.")
+        _set_input(node, "Size", size)
+    else:
+        raise ResolveUpdateError(f"Не удалось вписать текст новости {index} в высоту фотографии.")
+    # Preserve the title position where possible; move the whole block only
+    # as far as needed to stay inside the photograph.
+    x, y = _components(_at(title, "Center", 14), 2)
+    new_top = min(top - 1, max(tr[3], bottom + 1 + total))
+    if abs(new_top - tr[3]) > 1e-8:
+        _set_input(title, "Center", {1: x, 2: y + (new_top - tr[3]) / height})
+    return body_layout_plan(title, body, comp, f"title_{index:02d}", gap,
+                            photo_limits=(bottom, top))
+
+
+def _layout_plans(comp, nodes, gap, constrain_to_photo):
+    return [fit_photo_text_pair(comp, title, body, index, gap) if constrain_to_photo
+            else body_layout_plan(title, body, comp, f"title_{index:02d}", gap)
+            for index, (title, body, _) in enumerate(nodes, start=1)]
+
+
+def _verify_photo_layout(comp, nodes, gap):
+    for index, (title, body, _) in enumerate(nodes, start=1):
+        _, height = _text_frame_size(title, comp)
+        bottom, top = photo_vertical_limits(comp, index, height)
+        tr, br = _text_bounds(title, 14), _text_bounds(body, 14)
+        if tr[3] > top + 1 or br[1] < bottom - 1 or abs(tr[1] - br[3] - gap) > 2:
+            raise ResolveUpdateError(
+                f"Fusion не подтвердил отступ/границы текста в новости {index}. "
+                "Проверьте выражения Center и отмените группу верстки через Undo.")
+
+
+def reflow_composition(comp, gap_pixels=80.):
+    gap = _number(gap_pixels)
+    if gap is None or gap < 0:
+        raise ResolveUpdateError("Отступ должен быть конечным числом от 0 пикселей.")
+    nodes = validate_composition(comp)
+    started = False
+    try:
+        if callable(getattr(comp, "StartUndo", None)) and callable(getattr(comp, "EndUndo", None)):
+            comp.StartUndo("Resolve Digest — верстка")
+            started = True
+        for title, body, _ in nodes:
+            for node in (title, body):
+                auto_scale_text(node, comp, str(_input_value(node, "StyledText") or ""))
+        plans = _layout_plans(comp, nodes, gap, True)
+        for center, expression in plans:
+            if center.SetExpression(expression) is False:
+                raise ResolveUpdateError("Fusion отклонил выражение отступа body.")
+        _verify_photo_layout(comp, nodes, gap)
+    finally:
+        if started:
+            comp.EndUndo(True)
 
 
 def _resolve_api():
@@ -257,7 +392,8 @@ def _find_required(comp, node_name: str):
     return node
 
 
-def update_composition(comp, articles: list[DownloadedArticle], body_gap_pixels=None) -> None:
+def update_composition(comp, articles: list[DownloadedArticle], body_gap_pixels=None,
+                       constrain_to_photo=False) -> None:
     """Replace five reserved node groups, leaving the Fusion graph untouched."""
     if len(articles) != 5:
         raise ResolveUpdateError("Для обновления требуется ровно пять новостей.")
@@ -299,13 +435,16 @@ def update_composition(comp, articles: list[DownloadedArticle], body_gap_pixels=
             # rendering. Keep one undo group, but measure after unlocking.
             comp.Unlock()
             locked = False
-            plans = [body_layout_plan(title, body, comp, f"title_{index:02d}", body_gap_pixels)
-                     for index, (title, body, _) in enumerate(nodes, start=1)]
+            plans = _layout_plans(comp, nodes, gap, constrain_to_photo)
             comp.Lock()
             locked = True
             for center_input, expression in plans:
                 if center_input.SetExpression(expression) is False:
                     raise ResolveUpdateError("Fusion отклонил выражение автоматического отступа body.")
+            if constrain_to_photo:
+                comp.Unlock()
+                locked = False
+                _verify_photo_layout(comp, nodes, gap)
     finally:
         try:
             if locked:

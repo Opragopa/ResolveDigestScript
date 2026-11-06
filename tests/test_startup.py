@@ -19,6 +19,7 @@ def launcher():
     tree.body.pop()  # final run()
     scope = {'__file__': str(ENTRY), '__name__': 'launcher_test'}
     exec(compile(tree, str(ENTRY), 'exec'), scope)
+    scope["_refresh_installation"] = lambda directory: False  # No network in launcher unit tests.
     return scope
 
 

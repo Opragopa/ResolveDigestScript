@@ -16,7 +16,7 @@ def main() -> int:
     parser.add_argument("--cache", type=Path, default=Path("cache"))
     parser.add_argument("--clip-name", help="Optional exact timeline clip name containing the Fusion comp")
     parser.add_argument("--dry-run", action="store_true", help="Parse and download only; do not edit Resolve")
-    parser.add_argument("--body-gap", type=float, default=20.0, help="Gap below title in pixels (default: 20)")
+    parser.add_argument("--body-gap", type=float, default=80.0, help="Gap below title in pixels (default: 80)")
     args = parser.parse_args()
     try:
         articles = parse_docx(args.docx)
@@ -46,7 +46,7 @@ def main() -> int:
         if args.dry_run:
             print("READY: DOCX and all five images are valid; Resolve was not changed.")
             return 0
-        update_composition(current_timeline_composition(args.clip_name), downloaded, body_gap_pixels=args.body_gap)
+        update_composition(current_timeline_composition(args.clip_name), downloaded, body_gap_pixels=args.body_gap, constrain_to_photo=True)
         print("DONE: five title/body/image groups updated in Fusion.")
         return 0
     except Exception as error:

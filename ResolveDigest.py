@@ -12,7 +12,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-BODY_GAP_PIXELS = 20.0
+BODY_GAP_PIXELS = 80.0
 
 
 def _script_directory() -> Path:
@@ -158,47 +158,8 @@ def _report_error(comp, stage, error, progress=None):
 def _ask_options(comp):
     """Use an owned Windows file chooser, otherwise Qt or Fusion."""
     if os.name == "nt":
-        # Resolve's embedded UI can restore a Fusion window at an unreachable
-        # coordinate. Give the native chooser an owner on the primary screen.
-        powershell = r'''$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-Add-Type -AssemblyName System.Windows.Forms
-$dialog = New-Object System.Windows.Forms.OpenFileDialog
-$dialog.Title = "Resolve Digest — выберите DOCX с 5 новостями"
-$dialog.Filter = "Документы Word (*.docx)|*.docx"
-$dialog.InitialDirectory = [Environment]::GetFolderPath('MyDocuments')
-$owner = New-Object System.Windows.Forms.Form
-$owner.StartPosition = 'Manual'
-$owner.Size = New-Object System.Drawing.Size(1, 1)
-$area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$owner.Location = New-Object System.Drawing.Point(($area.X + [int]($area.Width / 2)), ($area.Y + [int]($area.Height / 2)))
-$owner.ShowInTaskbar = $false
-$owner.TopMost = $true
-$owner.Opacity = 0
-$owner.Show()
-if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
-    [Console]::Out.Write($dialog.FileName)
-}
-$dialog.Dispose()
-$owner.Dispose()'''
-        result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-STA", "-Command", powershell],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError("Не удалось открыть выбор DOCX: " + result.stderr.strip())
-        docx_path = result.stdout.strip()
-        if not docx_path:
-            return None
-        document = Path(docx_path)
-        return {
-            "docx": str(document),
-            "clip_name": "",
-        }
+        from resolve_digest.options import ask_windows_options
+        return ask_windows_options(_script_directory(), globals().get("_DIGEST_UPDATE_STATUS", ""))
     try:
         from PySide2.QtCore import Qt
         from PySide2.QtWidgets import QApplication, QFileDialog
@@ -242,6 +203,37 @@ $owner.Dispose()'''
     })
 
 
+def _refresh_installation(directory):
+    # Resolve keeps imported modules alive between menu launches. Drop cached
+    # package objects so the next run uses the files now installed on disk.
+    import importlib
+    importlib.invalidate_caches()
+    for name in tuple(sys.modules):
+        if name == "resolve_digest" or name.startswith("resolve_digest."):
+            del sys.modules[name]
+    from resolve_digest.options import load_preferences
+    skip = globals().pop("_DIGEST_SKIP_UPDATE", False)
+    if skip:
+        return False
+    if not load_preferences(directory).get("auto_update", True):
+        globals()["_DIGEST_UPDATE_STATUS"] = "Автообновление отключено."
+        return False
+    from resolve_digest.updater import update_checkout
+    updated, message = update_checkout(directory)
+    globals()["_DIGEST_UPDATE_STATUS"] = message
+    print("Resolve Digest: " + message)
+    if not updated:
+        return False
+    entry = Path(directory) / "ResolveDigest.py"
+    scope = {"__name__": "__main__", "__file__": str(entry), "_DIGEST_SKIP_UPDATE": True,
+             "_DIGEST_UPDATE_STATUS": message}
+    for name in ("resolve", "fusion", "fu"):
+        if name in globals():
+            scope[name] = globals()[name]
+    exec(compile(entry.read_text(encoding="utf-8"), str(entry), "exec"), scope)
+    return True
+
+
 def run() -> None:
     comp = None
     progress = None
@@ -254,6 +246,8 @@ def run() -> None:
         script_directory = _script_directory()
         if str(script_directory) not in sys.path:
             sys.path.insert(0, str(script_directory))
+        if _refresh_installation(script_directory):
+            return
         from resolve_digest.progress import create_progress, ProgressCancelled
         cancelled_errors = (ProgressCancelled,)
         stage = "Загрузка модулей и зависимостей"
@@ -272,7 +266,7 @@ def run() -> None:
         current_timeline_composition = adapter.current_timeline_composition
         stage = "Проверка проекта и Fusion-композиции"
         comp = current_timeline_composition()
-        stage = "Выбор DOCX"
+        stage = "Настройки выпуска"
         options = _ask_options(comp)
         if not options:
             return
@@ -284,6 +278,13 @@ def run() -> None:
             comp = current_timeline_composition(clip_name)
         stage = "Проверка шаблона Fusion"
         adapter.validate_composition(comp)
+        gap = float(options.get("body_gap_pixels", BODY_GAP_PIXELS))
+        if options.get("layout_only", False):
+            stage = "Обновление Fusion-композиции"
+            progress.update(30, "Верстка текста в границах фото", "Отступ: {:g} px".format(gap), cancellable=False)
+            adapter.reflow_composition(comp, gap)
+            progress.finish("success", "Отступы и границы текста обновлены", "Отступ title → body: {:g} px".format(gap))
+            return
         docx_path = Path(options["docx"])
         if not docx_path.is_file():
             raise FileNotFoundError("Выберите существующий DOCX-файл: " + str(docx_path))
@@ -325,7 +326,7 @@ def run() -> None:
         stage = "Обновление Fusion-композиции"
         # Cancellation stops at this boundary: don't interrupt a partial edit.
         progress.update(95, stage, "Запись текста и изображений. Дождитесь завершения.", cancellable=False)
-        adapter.update_composition(comp, downloaded, body_gap_pixels=BODY_GAP_PIXELS)
+        adapter.update_composition(comp, downloaded, body_gap_pixels=gap, constrain_to_photo=True)
         progress.finish("success", "Готово: пять новостей обновлены", "Рендер запустите в Deliver вручную.\nИзображения: " + str(cache))
     except cancelled_errors:
         try:
