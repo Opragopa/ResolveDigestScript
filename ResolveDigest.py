@@ -118,7 +118,7 @@ def _message(comp, title, text):
         })
 
 
-def _report_error(comp, stage, error):
+def _report_error(comp, stage, error, progress=None):
     details = "{}\nPython: {}\nExecutable: {}\nStage: {}\n{}\n".format(
         datetime.now().isoformat(), sys.version, sys.executable, stage, traceback.format_exc())
     print(details)
@@ -141,6 +141,12 @@ def _report_error(comp, stage, error):
     if stage == "Обновление Fusion-композиции":
         text += "\nЕсли часть правок применилась, отмените группу Resolve Digest через Undo в Fusion."
     text += "\n\nЖурнал: {}".format(log_path) if log_path else "\nПодробности — в консоли Resolve."
+    if progress is not None:
+        try:
+            progress.finish("error", "Не удалось собрать выпуск", text)
+            return
+        except Exception:
+            traceback.print_exc()
     try:
         _message(comp, "Resolve Digest — ошибка", text)
     except Exception:
@@ -236,6 +242,9 @@ $owner.Dispose()'''
 
 def run() -> None:
     comp = None
+    progress = None
+    download_session = None
+    cancelled_errors = ()
     stage = "Запуск и поиск папки скрипта"
     try:
         if sys.version_info < (3, 9):
@@ -243,7 +252,10 @@ def run() -> None:
         script_directory = _script_directory()
         if str(script_directory) not in sys.path:
             sys.path.insert(0, str(script_directory))
+        from resolve_digest.progress import create_progress, ProgressCancelled
+        cancelled_errors = (ProgressCancelled,)
         stage = "Загрузка модулей и зависимостей"
+        import requests
         from resolve_digest.article_images import download_all_article_images
         from resolve_digest.docx_parser import parse_docx
         from resolve_digest import fusion as adapter
@@ -262,6 +274,9 @@ def run() -> None:
         options = _ask_options(comp)
         if not options:
             return
+        stage = "Открытие окна прогресса"
+        progress = create_progress()
+        progress.update(2, "Проверка проекта и шаблона Fusion")
         clip_name = options.get("clip_name", "").strip() or None
         if clip_name:
             comp = current_timeline_composition(clip_name)
@@ -269,20 +284,29 @@ def run() -> None:
         adapter.validate_composition(comp)
         docx_path = Path(options["docx"])
         if not docx_path.is_file():
-            _message(comp, "Resolve Digest", "Выберите существующий DOCX-файл.")
-            return
+            raise FileNotFoundError("Выберите существующий DOCX-файл: " + str(docx_path))
         stage = "Чтение DOCX"
+        progress.update(5, stage, docx_path.name)
         articles = parse_docx(docx_path)
         stage = "Подготовка папки изображений"
         cache = digest_output_directory(docx_path)
+        progress.update(8, stage, str(cache))
         if os.name == "nt" and not Path(cache.anchor).exists():
             raise RuntimeError("Диск сохранения недоступен: " + cache.anchor)
         cache.mkdir(parents=True, exist_ok=True)
         downloaded = []
+        download_session = requests.Session()
+        download_session.trust_env = False
         for index, article in enumerate(articles, start=1):
             stage = "Загрузка новости {}/5: {}".format(index, article.url)
+            def image_progress(done, total, message):
+                fraction = done / total if total else 0
+                percent = 10 + ((index - 1 + fraction) / len(articles)) * 80
+                progress.update(percent, "Новость {}/{}: {}".format(index, len(articles), message),
+                                article.title + "\n" + article.url)
             news_dir = cache / f"news_{index:02d}"
-            image_paths, image_urls = download_all_article_images(article.url, news_dir)
+            image_paths, image_urls = download_all_article_images(
+                article.url, news_dir, session=download_session, on_progress=image_progress)
             selected_frame = article.photo_number - 1
             if selected_frame >= len(image_paths):
                 raise RuntimeError(
@@ -297,10 +321,23 @@ def run() -> None:
                 f"initial Trim={selected_frame}-{selected_frame}"
             )
         stage = "Обновление Fusion-композиции"
+        # Cancellation stops at this boundary: don't interrupt a partial edit.
+        progress.update(95, stage, "Запись текста и изображений. Дождитесь завершения.", cancellable=False)
         adapter.update_composition(comp, downloaded)
-        _message(comp, "Resolve Digest", "Готово: пять новостей обновлены. Рендер запустите в Deliver вручную.")
+        progress.finish("success", "Готово: пять новостей обновлены", "Рендер запустите в Deliver вручную.\nИзображения: " + str(cache))
+    except cancelled_errors:
+        try:
+            progress.finish("cancelled", "Операция отменена", "Композиция не изменена. Уже скачанные файлы остаются на диске.")
+        except Exception as error:
+            _report_error(comp, "Отмена загрузки", error)
     except Exception as error:
-        _report_error(comp, stage, error)
+        if progress is None:
+            _report_error(comp, stage, error)
+        else:
+            _report_error(comp, stage, error, progress)
+    finally:
+        if download_session is not None:
+            download_session.close()
 
 
 run()
