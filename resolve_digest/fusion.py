@@ -163,10 +163,34 @@ def _components(value, count):
             values = [value[index] for index in range(count)]
         elif count == 2 and "X" in value and "Y" in value:
             values = [value["X"], value["Y"]]
+        elif count == 4:
+            for keys in (("left", "bottom", "right", "top"),
+                         ("Left", "Bottom", "Right", "Top"),
+                         ("x1", "y1", "x2", "y2")):
+                if all(key in value for key in keys):
+                    values = [value[key] for key in keys]
+                    break
+            else:
+                raise ResolveUpdateError("Fusion вернул неизвестный формат прямоугольника.")
         else:
             raise ResolveUpdateError("Fusion вернул неизвестный формат координат.")
     elif isinstance(value, (list, tuple)) and len(value) >= count:
         values = value[:count]
+    elif value is not None:
+        # Native bridge wrappers may expose a Point/Rect object rather than a
+        # Python table. Accept only complete, finite coordinate sets.
+        keys_options = (("X", "Y"),) if count == 2 else (
+            ("left", "bottom", "right", "top"),
+            ("Left", "Bottom", "Right", "Top"),
+            ("x1", "y1", "x2", "y2"), ("X1", "Y1", "X2", "Y2"))
+        values = None
+        for keys in keys_options:
+            candidate = [getattr(value, key, None) for key in keys]
+            if all(_number(item) is not None for item in candidate):
+                values = candidate
+                break
+        if values is None:
+            raise ResolveUpdateError("Fusion вернул неизвестный объект координат: " + type(value).__name__)
     else:
         raise ResolveUpdateError("Fusion не вернул координаты текста.")
     numbers = [_number(item) for item in values]
@@ -175,16 +199,55 @@ def _components(value, count):
     return numbers
 
 
-def _text_bounds(tool, frame):
+def _rendered_image(output, frame):
+    getter = getattr(output, "GetValue", None)
+    if not callable(getter):
+        raise ResolveUpdateError("Fusion не предоставляет Output.GetValue.")
+    try:
+        image = getter(frame, 0, 0)
+    except TypeError:
+        image = getter(frame)
+    if image is None:
+        image = getter(frame)
+    return image
+
+
+def _text_bounds(tool, frame, rendered_image=None, label=None):
+    """Read a real rectangle; some Resolve bridges return None from GetDoD.
+
+    Prefer the already-rendered image when available. Otherwise retain the
+    cheap DoD path, then render and read Image.DataWindow as a fallback. Never
+    invent a full-frame rectangle when the bridge supplies no coordinates.
+    """
     output = getattr(tool, "Output", None)
     getter = getattr(output, "GetDoD", None)
-    if not callable(getter):
-        raise ResolveUpdateError("Fusion не поддерживает измерение границ Text+ (Output.GetDoD).")
-    # Explicit proxy=0: gap is expressed in full-resolution pixels.
-    rect = _components(getter(frame, 0, 0), 4)
-    if rect[2] <= rect[0] or rect[3] <= rect[1]:
-        raise ResolveUpdateError("Пустые границы Text+. Проверьте видимость текста на кадре " + str(frame))
-    return rect
+    sources = []
+    if rendered_image is not None:
+        sources.append(("Image.DataWindow", lambda: getattr(rendered_image, "DataWindow", None)))
+    if callable(getter):
+        sources.extend((("GetDoD(frame,0,0)", lambda: getter(frame, 0, 0)),
+                        ("GetDoD(frame)", lambda: getter(frame))))
+    if callable(getattr(output, "GetValue", None)):
+        sources.append(("GetValue.DataWindow", lambda: getattr(_rendered_image(output, frame), "DataWindow", None)))
+    diagnostics = []
+    for method, read in sources:
+        value = None
+        try:
+            value = read()
+            rect = _components(value, 4)
+            if rect[2] <= rect[0] or rect[3] <= rect[1]:
+                raise ResolveUpdateError("Пустые границы изображения")
+            return rect
+        except Exception as error:
+            diagnostics.append(f"{method}: {type(value).__name__} {repr(value)[:160]}; {type(error).__name__}: {error}")
+    if label is None:
+        attrs = getattr(tool, "GetAttrs", None)
+        label = (attrs() or {}).get("TOOLS_Name") if callable(attrs) else None
+    details = " | ".join(diagnostics) or "Нет методов GetDoD/GetValue"
+    print(f"Resolve Digest bounds failure: node={label or '?'} frame={frame}; {details}")
+    raise ResolveUpdateError(
+        f"Не удалось измерить границы ноды {label or 'Text+'} на кадре {frame}. "
+        f"Fusion не вернул подходящие координаты. {details}")
 
 
 def body_layout_plan(title, body, comp, title_name, gap_pixels, sample_frame=14, photo_limits=None):
@@ -276,11 +339,11 @@ def photo_vertical_limits(comp, index, canvas_height):
     output = getattr(static, "Output", None)
     if not callable(getattr(output, "GetValue", None)):
         raise ResolveUpdateError("Не удалось получить разрешение обработанной фотографии.")
-    image = output.GetValue(0, 0, 0)
+    image = _rendered_image(output, 0)
     native_height = _number(getattr(image, "Height", None))
     if native_height is None or native_height <= 0:
         raise ResolveUpdateError("Фотография не загружена на кадре 0: " + static_name)
-    rect = _text_bounds(static, 0)
+    rect = _text_bounds(static, 0, rendered_image=image, label=static_name)
     shift = (canvas_height - native_height) / 2
     bottom, top = max(0., rect[1] + shift), min(canvas_height, rect[3] + shift)
     if top <= bottom:
