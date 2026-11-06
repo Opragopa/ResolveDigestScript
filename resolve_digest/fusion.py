@@ -74,7 +74,8 @@ def _input_value(tool, name: str):
 
 def _number(value) -> float | None:
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
@@ -92,6 +93,14 @@ def _composition_size(comp) -> tuple[float, float]:
         if width and height:
             return width, height
     return 1920.0, 1080.0
+
+
+def _text_frame_size(tool, comp):
+    width = _number(_input_value(tool, "Width"))
+    height = _number(_input_value(tool, "Height"))
+    if width and height and width > 1 and height > 1:
+        return width, height
+    return _composition_size(comp)
 
 
 def _base_text_size(tool) -> float | None:
@@ -113,17 +122,25 @@ def _base_text_size(tool) -> float | None:
 def auto_scale_text(tool, comp, text: str) -> float | None:
     """Fit text approximately into this Text+'s existing frame.
 
-    Text+ exposes its frame as normalized Width/Height and font Size. Resolve
-    has no scripting API for glyph measurement, so a conservative estimate
-    uses average Cyrillic glyph width and line height. It only reduces Size.
+    Text+ exposes its text frame as LayoutWidth/LayoutHeight (Width/Height
+    describe the output image). This pre-pass estimates wrapping using average
+    Cyrillic glyph width and line height. Positioning later uses actual DoD.
+    It only reduces Size.
     """
-    box_width = _number(_input_value(tool, "Width"))
-    box_height = _number(_input_value(tool, "Height"))
+    box_width = _number(_input_value(tool, "LayoutWidth"))
+    box_height = _number(_input_value(tool, "LayoutHeight"))
+    # Compatibility with older adapters that exposed normalized box sizes.
+    if box_width is None:
+        width = _number(_input_value(tool, "Width"))
+        box_width = width if width is not None and 0 < width <= 1 else None
+    if box_height is None:
+        height = _number(_input_value(tool, "Height"))
+        box_height = height if height is not None and 0 < height <= 1 else None
     base_size = _base_text_size(tool)
     if not box_width or not box_height or not base_size or box_width <= 0 or box_height <= 0:
         return None
 
-    frame_width, frame_height = _composition_size(comp)
+    frame_width, frame_height = _text_frame_size(tool, comp)
     available_width = box_width * frame_width
     available_height = box_height * frame_height
     glyphs = max(len(text.replace("\n", "")), 1)
@@ -136,6 +153,80 @@ def auto_scale_text(tool, comp, text: str) -> float | None:
     size = base_size * scale
     _set_input(tool, "Size", size)
     return size
+
+
+def _components(value, count):
+    if isinstance(value, dict):
+        if all(index in value for index in range(1, count + 1)):
+            values = [value[index] for index in range(1, count + 1)]
+        elif all(index in value for index in range(count)):
+            values = [value[index] for index in range(count)]
+        elif count == 2 and "X" in value and "Y" in value:
+            values = [value["X"], value["Y"]]
+        else:
+            raise ResolveUpdateError("Fusion вернул неизвестный формат координат.")
+    elif isinstance(value, (list, tuple)) and len(value) >= count:
+        values = value[:count]
+    else:
+        raise ResolveUpdateError("Fusion не вернул координаты текста.")
+    numbers = [_number(item) for item in values]
+    if any(item is None for item in numbers):
+        raise ResolveUpdateError("Fusion вернул недопустимые координаты текста.")
+    return numbers
+
+
+def _text_bounds(tool, frame):
+    output = getattr(tool, "Output", None)
+    getter = getattr(output, "GetDoD", None)
+    if not callable(getter):
+        raise ResolveUpdateError("Fusion не поддерживает измерение границ Text+ (Output.GetDoD).")
+    # Explicit proxy=0: gap is expressed in full-resolution pixels.
+    rect = _components(getter(frame, 0, 0), 4)
+    if rect[2] <= rect[0] or rect[3] <= rect[1]:
+        raise ResolveUpdateError("Пустые границы Text+. Проверьте видимость текста на кадре " + str(frame))
+    return rect
+
+
+def body_layout_plan(title, body, comp, title_name, gap_pixels, sample_frame=14):
+    """Measure before setting an expression; never reference body's own output.
+
+    Supplied template: text is static, title/body share downstream transforms,
+    and body_01 finishes its alpha fade at frame 14. DoD is queried unlocked.
+    """
+    gap = _number(gap_pixels)
+    if gap is None or gap < 0:
+        raise ResolveUpdateError("Отступ title/body должен быть конечным числом от 0 пикселей.")
+    for node in (title, body):
+        if _number(_input_value(node, "LayoutType")) != 1:
+            raise ResolveUpdateError("Для автоматического отступа title и body должны использовать Layout → Frame.")
+    center_input = getattr(body, "Center", None)
+    if not callable(getattr(center_input, "SetExpression", None)):
+        raise ResolveUpdateError("Не удалось получить вход Center у body для привязки к title.")
+    try:
+        center = body.GetInput("Center", sample_frame)
+    except TypeError:
+        center = body.GetInput("Center")
+    x, y = _components(center, 2)
+    title_width, title_height = _text_frame_size(title, comp)
+    body_width, body_height = _text_frame_size(body, comp)
+    if (title_width, title_height) != (body_width, body_height):
+        raise ResolveUpdateError("Разрешение title и body должно совпадать.")
+    title_rect = _text_bounds(title, sample_frame)
+    body_rect = _text_bounds(body, sample_frame)
+    for rect in (title_rect, body_rect):
+        if rect[0] <= 0 and rect[1] <= 0 and rect[2] >= body_width and rect[3] >= body_height:
+            raise ResolveUpdateError("Text+ вернул границы всего кадра: точный отступ измерить невозможно.")
+    top_offset = body_rect[3] / body_height - y
+    new_top = title_rect[1] - gap
+    new_bottom = new_top - (body_rect[3] - body_rect[1])
+    if new_bottom < 0 or new_top > body_height:
+        raise ResolveUpdateError("Описание не помещается под заголовком: уменьшите Size или отступ title/body.")
+    # Only title.Output is referenced, so this creates no self-dependency.
+    expression = (
+        f"Point({x:.12g}, {title_name}.Output.DataWindow[2] / "
+        f"{title_name}.Output.Height - {gap / body_height:.12g} - ({top_offset:.12g}))"
+    )
+    return center_input, expression
 
 
 def _resolve_api():
@@ -166,10 +257,14 @@ def _find_required(comp, node_name: str):
     return node
 
 
-def update_composition(comp, articles: list[DownloadedArticle]) -> None:
+def update_composition(comp, articles: list[DownloadedArticle], body_gap_pixels=None) -> None:
     """Replace five reserved node groups, leaving the Fusion graph untouched."""
     if len(articles) != 5:
         raise ResolveUpdateError("Для обновления требуется ровно пять новостей.")
+    if body_gap_pixels is not None:
+        gap = _number(body_gap_pixels)
+        if gap is None or gap < 0:
+            raise ResolveUpdateError("Отступ title/body должен быть конечным числом от 0 пикселей.")
     nodes = validate_composition(comp)
     for item in articles:
         if not 1 <= item.article.photo_number <= item.image_count:
@@ -199,6 +294,18 @@ def update_composition(comp, articles: list[DownloadedArticle]) -> None:
             frame = item.article.photo_number - 1
             _set_input(image, "ClipTimeStart", frame)
             _set_input(image, "ClipTimeEnd", frame)
+        if body_gap_pixels is not None:
+            # Evaluating outputs while locked can return stale bounds or block
+            # rendering. Keep one undo group, but measure after unlocking.
+            comp.Unlock()
+            locked = False
+            plans = [body_layout_plan(title, body, comp, f"title_{index:02d}", body_gap_pixels)
+                     for index, (title, body, _) in enumerate(nodes, start=1)]
+            comp.Lock()
+            locked = True
+            for center_input, expression in plans:
+                if center_input.SetExpression(expression) is False:
+                    raise ResolveUpdateError("Fusion отклонил выражение автоматического отступа body.")
     finally:
         try:
             if locked:

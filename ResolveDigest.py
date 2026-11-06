@@ -12,6 +12,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+BODY_GAP_PIXELS = 20.0
+
 
 def _script_directory() -> Path:
     """Resolve executes menu scripts with ``exec`` and omits ``__file__``."""
@@ -323,7 +325,7 @@ def run() -> None:
         stage = "Обновление Fusion-композиции"
         # Cancellation stops at this boundary: don't interrupt a partial edit.
         progress.update(95, stage, "Запись текста и изображений. Дождитесь завершения.", cancellable=False)
-        adapter.update_composition(comp, downloaded)
+        adapter.update_composition(comp, downloaded, body_gap_pixels=BODY_GAP_PIXELS)
         progress.finish("success", "Готово: пять новостей обновлены", "Рендер запустите в Deliver вручную.\nИзображения: " + str(cache))
     except cancelled_errors:
         try:
