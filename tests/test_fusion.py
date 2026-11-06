@@ -59,7 +59,7 @@ class FusionTests(unittest.TestCase):
         update_composition(comp, articles())
         self.assertEqual(comp.nodes["title_01"].values["StyledText"], "TITLE 1")
         self.assertEqual(comp.nodes["body_05"].values["StyledText"], "Body 5")
-        self.assertTrue(comp.nodes["image_02"].values["Clip"].endswith("news_02/photo_01.jpg"))
+        self.assertTrue(Path(comp.nodes["image_02"].values["Clip"]).as_posix().endswith("news_02/photo_01.jpg"))
         self.assertEqual(comp.nodes["image_02"].values["ClipTimeStart"], 1)
         self.assertEqual(comp.nodes["image_02"].values["ClipTimeEnd"], 1)
         self.assertFalse(comp.locked)
@@ -83,7 +83,7 @@ class FusionTests(unittest.TestCase):
         comp = Composition()
         update_composition(comp, articles())
         for index in range(1, 6):
-            self.assertTrue(comp.nodes[f"image_{index:02d}"].values["Clip"].endswith(f"news_{index:02d}/photo_01.jpg"))
+            self.assertTrue(Path(comp.nodes[f"image_{index:02d}"].values["Clip"]).as_posix().endswith(f"news_{index:02d}/photo_01.jpg"))
             self.assertEqual(comp.nodes[f"image_{index:02d}"].values["ClipTimeStart"], index - 1)
             self.assertEqual(comp.nodes[f"image_{index:02d}"].values["ClipTimeEnd"], index - 1)
 

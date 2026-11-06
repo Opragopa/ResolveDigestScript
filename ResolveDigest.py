@@ -4,83 +4,185 @@ Put this file together with the ``resolve_digest`` directory into Resolve's
 ``Fusion/Scripts/Utility/ResolveDigest`` folder.  It intentionally has no CLI
 arguments: all input is collected in Resolve.
 """
-from __future__ import annotations
-
 import os
 import subprocess
 import sys
+import traceback
+import tempfile
+from datetime import datetime
 from pathlib import Path
 
 
 def _script_directory() -> Path:
     """Resolve executes menu scripts with ``exec`` and omits ``__file__``."""
-    try:
-        return Path(__file__).resolve().parent
-    except NameError:
-        # `Scripts:/` is Resolve/Fusion's documented path map.  This branch is
-        # used only when the script is selected from Workspace > Scripts.
-        fusion = globals().get("fusion")
-        if fusion is None:
-            # Resolve's menu runner does not always populate PYTHONPATH.  Add
-            # its documented Windows API module location before importing.
-            program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
-            api_modules = program_data / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Developer" / "Scripting" / "Modules"
-            if str(api_modules) not in sys.path:
-                sys.path.insert(0, str(api_modules))
-            import DaVinciResolveScript as dvr
-            resolve = dvr.scriptapp("Resolve")
-            fusion = resolve.Fusion() if resolve else None
-        scripts_utility = fusion.MapPath("Scripts:/Utility") if fusion else None
-        if not scripts_utility:
-            raise RuntimeError("Cannot determine the Resolve Scripts folder.")
-        # Both names are supported because older setup instructions used the
-        # shorter folder name, while this repository is ResolveDigestScript.
-        for folder_name in ("ResolveDigestScript", "ResolveDigest"):
-            candidate = Path(scripts_utility) / folder_name
-            if (candidate / "resolve_digest").is_dir():
+    candidates = []
+    if globals().get("__file__"):
+        candidates.append(Path(__file__).resolve().parent)
+    # This works even when the menu supplies neither __file__ nor API globals.
+    if os.name == "nt" and os.environ.get("APPDATA"):
+        utility = Path(os.environ["APPDATA"]) / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Fusion" / "Scripts" / "Utility"
+        candidates.extend(utility / name for name in ("ResolveDigestScript", "ResolveDigest", ""))
+    for candidate in candidates:
+        if (candidate / "resolve_digest" / "__init__.py").is_file():
+            return candidate
+    fusion = globals().get("fusion") or globals().get("fu")
+    resolve = globals().get("resolve")
+    if fusion is None and resolve is not None:
+        fusion = resolve.Fusion()
+    if fusion is None:
+        program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+        api_modules = program_data / "Blackmagic Design" / "DaVinci Resolve" / "Support" / "Developer" / "Scripting" / "Modules"
+        if str(api_modules) not in sys.path:
+            sys.path.insert(0, str(api_modules))
+        import DaVinciResolveScript as dvr
+        resolve = dvr.scriptapp("Resolve")
+        fusion = resolve.Fusion() if resolve else None
+    utility = fusion.MapPath("Scripts:/Utility") if fusion else None
+    if utility:
+        for name in ("ResolveDigestScript", "ResolveDigest", ""):
+            candidate = Path(utility) / name
+            if (candidate / "resolve_digest" / "__init__.py").is_file():
                 return candidate
-        raise RuntimeError("ResolveDigestScript folder was not found under Scripts:/Utility.")
+    raise RuntimeError("Не найдена папка resolve_digest рядом с ResolveDigest.py. Скопируйте всю папку скрипта.")
 
 
-SCRIPT_DIRECTORY = _script_directory()
-if str(SCRIPT_DIRECTORY) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIRECTORY))
+def _windows_message(title, text):
+    """Centre the actual message box on the primary work area on activation.
 
+    A thread-local CBT hook avoids Qt dependencies and stale saved positions.
+    Pointer-sized signatures are essential in Resolve's 64-bit Python.
+    """
+    import ctypes
+    from ctypes import wintypes as w
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, w.WPARAM, w.LPARAM)
+    user.SetWindowsHookExW.argtypes = [ctypes.c_int, callback_type, w.HINSTANCE, w.DWORD]
+    user.SetWindowsHookExW.restype = w.HANDLE
+    user.CallNextHookEx.argtypes = [w.HANDLE, ctypes.c_int, w.WPARAM, w.LPARAM]
+    user.CallNextHookEx.restype = ctypes.c_ssize_t
+    user.UnhookWindowsHookEx.argtypes = [w.HANDLE]
+    user.GetWindowRect.argtypes = [w.HWND, ctypes.POINTER(w.RECT)]
+    user.SystemParametersInfoW.argtypes = [w.UINT, w.UINT, w.LPVOID, w.UINT]
+    user.SetWindowPos.argtypes = [w.HWND, w.HWND, ctypes.c_int, ctypes.c_int,
+                                  ctypes.c_int, ctypes.c_int, w.UINT]
+    user.MessageBoxW.argtypes = [w.HWND, w.LPCWSTR, w.LPCWSTR, w.UINT]
+    kernel.GetCurrentThreadId.restype = w.DWORD
 
-def _message(comp, title: str, text: str) -> None:
-    """Prefer a visible system dialog; retain Fusion's dialog as a fallback."""
-    print(f"{title}: {text}")
+    @callback_type
+    def centre(code, hwnd, data):
+        if code == 5:  # HCBT_ACTIVATE; SPI_GETWORKAREA always means primary.
+            area, rect = w.RECT(), w.RECT()
+            if (user.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0)
+                    and user.GetWindowRect(hwnd, ctypes.byref(rect))):
+                x = area.left + max(0, (area.right - area.left - rect.right + rect.left) // 2)
+                y = area.top + max(0, (area.bottom - area.top - rect.bottom + rect.top) // 2)
+                user.SetWindowPos(hwnd, None, x, y, 0, 0, 0x0015)
+        return user.CallNextHookEx(None, code, hwnd, data)
+
+    hook = user.SetWindowsHookExW(5, centre, None, kernel.GetCurrentThreadId())
+    if not hook:
+        raise ctypes.WinError(ctypes.get_last_error())
     try:
-        from PySide2.QtWidgets import QMessageBox
-        QMessageBox.information(None, title, text)
-        return
-    except ImportError:
-        pass
-    comp.AskUser(title, {
-        1.0: {"ID": "message", "Name": text, "Type": "Text", "Default": "Нажмите OK, чтобы закрыть."},
-    })
+        # TOPMOST | SETFOREGROUND | MB_OK; no QApplication is needed.
+        if not user.MessageBoxW(None, text, title, 0x00050000):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        user.UnhookWindowsHookEx(hook)
+
+
+def _message(comp, title, text):
+    print("{}: {}".format(title, text))
+    if os.name == "nt":
+        try:
+            _windows_message(title, text)
+            return
+        except Exception:
+            traceback.print_exc()
+    try:
+        from PySide2.QtWidgets import QApplication, QMessageBox
+        app = QApplication.instance()
+        if app is not None:
+            dialog = QMessageBox(QMessageBox.Information, title, text, QMessageBox.Ok)
+            dialog.adjustSize()
+            screen = app.primaryScreen()
+            if screen:
+                dialog.move(screen.availableGeometry().center() - dialog.rect().center())
+            dialog.exec_()
+            return
+    except Exception:
+        traceback.print_exc()
+    if comp is not None:
+        comp.AskUser(title, {
+            1.0: {"ID": "message", "Name": text, "Type": "Text", "Default": "Нажмите OK, чтобы закрыть."},
+        })
+
+
+def _report_error(comp, stage, error):
+    details = "{}\nPython: {}\nExecutable: {}\nStage: {}\n{}\n".format(
+        datetime.now().isoformat(), sys.version, sys.executable, stage, traceback.format_exc())
+    print(details)
+    log_path = None
+    for directory in (Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ResolveDigest",
+                      Path(tempfile.gettempdir()) / "ResolveDigest"):
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            log_path = directory / "ResolveDigest.log"
+            with log_path.open("a", encoding="utf-8") as stream:
+                stream.write(details)
+            break
+        except Exception:
+            log_path = None
+    text = "Этап: {}\n{}: {}".format(stage, type(error).__name__, error)
+    if isinstance(error, ImportError):
+        text += "\nУстановите requirements.txt в Python, которым пользуется Resolve."
+    if isinstance(error, PermissionError):
+        text += "\nПроверьте доступ к DOCX и папке сохранения, подключение диска Z:."
+    if stage == "Обновление Fusion-композиции":
+        text += "\nЕсли часть правок применилась, отмените группу Resolve Digest через Undo в Fusion."
+    text += "\n\nЖурнал: {}".format(log_path) if log_path else "\nПодробности — в консоли Resolve."
+    try:
+        _message(comp, "Resolve Digest — ошибка", text)
+    except Exception:
+        traceback.print_exc()
 
 
 def _ask_options(comp):
-    """Use a standard foreground file chooser whenever Resolve provides Qt."""
+    """Use an owned Windows file chooser, otherwise Qt or Fusion."""
     if os.name == "nt":
         # Resolve's embedded UI can restore a Fusion window at an unreachable
-        # coordinate.  WinForms' OpenFileDialog is a real Windows dialog and
-        # Windows places it on the active desktop instead.
-        powershell = r'''Add-Type -AssemblyName System.Windows.Forms
+        # coordinate. Give the native chooser an owner on the primary screen.
+        powershell = r'''$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.Title = "Resolve Digest — выберите DOCX с 5 новостями"
 $dialog.Filter = "Документы Word (*.docx)|*.docx"
 $dialog.InitialDirectory = [Environment]::GetFolderPath('MyDocuments')
-if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+$owner = New-Object System.Windows.Forms.Form
+$owner.StartPosition = 'Manual'
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$owner.Location = New-Object System.Drawing.Point(($area.X + [int]($area.Width / 2)), ($area.Y + [int]($area.Height / 2)))
+$owner.ShowInTaskbar = $false
+$owner.TopMost = $true
+$owner.Opacity = 0
+$owner.Show()
+if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
     [Console]::Out.Write($dialog.FileName)
-}'''
+}
+$dialog.Dispose()
+$owner.Dispose()'''
         result = subprocess.run(
             ["powershell.exe", "-NoProfile", "-STA", "-Command", powershell],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW,
             check=False,
         )
+        if result.returncode != 0:
+            raise RuntimeError("Не удалось открыть выбор DOCX: " + result.stderr.strip())
         docx_path = result.stdout.strip()
         if not docx_path:
             return None
@@ -92,6 +194,9 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     try:
         from PySide2.QtCore import Qt
         from PySide2.QtWidgets import QApplication, QFileDialog
+        app = QApplication.instance()
+        if app is None:
+            raise ImportError("Qt QApplication is not available")
         dialog = QFileDialog()
         dialog.setWindowTitle("Resolve Digest — выберите DOCX с 5 новостями")
         dialog.setDirectory(str(Path.home()))
@@ -130,31 +235,52 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
 
 
 def run() -> None:
-    # Imports live here so a missing Python package is shown as a useful Resolve
-    # dialog rather than a silent failure while the Scripts menu is loading.
+    comp = None
+    stage = "Запуск и поиск папки скрипта"
     try:
+        if sys.version_info < (3, 9):
+            raise RuntimeError("Для этого скрипта нужен Python 3.9 или новее. Текущий: " + sys.version)
+        script_directory = _script_directory()
+        if str(script_directory) not in sys.path:
+            sys.path.insert(0, str(script_directory))
+        stage = "Загрузка модулей и зависимостей"
         from resolve_digest.article_images import download_all_article_images
         from resolve_digest.docx_parser import parse_docx
-        from resolve_digest.fusion import current_timeline_composition, update_composition
+        from resolve_digest import fusion as adapter
         from resolve_digest.models import DownloadedArticle
         from resolve_digest.output import digest_output_directory
-    except ImportError as error:
-        print(f"Resolve Digest: missing dependency: {error}")
-        return
-
-    try:
+        host = globals().get("resolve")
+        if host is None:
+            fusion_host = globals().get("fusion") or globals().get("fu")
+            if fusion_host is not None:
+                host = fusion_host.GetResolve()
+        adapter.set_resolve_instance(host)
+        current_timeline_composition = adapter.current_timeline_composition
+        stage = "Проверка проекта и Fusion-композиции"
         comp = current_timeline_composition()
+        stage = "Выбор DOCX"
         options = _ask_options(comp)
         if not options:
             return
+        clip_name = options.get("clip_name", "").strip() or None
+        if clip_name:
+            comp = current_timeline_composition(clip_name)
+        stage = "Проверка шаблона Fusion"
+        adapter.validate_composition(comp)
         docx_path = Path(options["docx"])
         if not docx_path.is_file():
             _message(comp, "Resolve Digest", "Выберите существующий DOCX-файл.")
             return
+        stage = "Чтение DOCX"
         articles = parse_docx(docx_path)
+        stage = "Подготовка папки изображений"
         cache = digest_output_directory(docx_path)
+        if os.name == "nt" and not Path(cache.anchor).exists():
+            raise RuntimeError("Диск сохранения недоступен: " + cache.anchor)
+        cache.mkdir(parents=True, exist_ok=True)
         downloaded = []
         for index, article in enumerate(articles, start=1):
+            stage = "Загрузка новости {}/5: {}".format(index, article.url)
             news_dir = cache / f"news_{index:02d}"
             image_paths, image_urls = download_all_article_images(article.url, news_dir)
             selected_frame = article.photo_number - 1
@@ -170,16 +296,11 @@ def run() -> None:
                 f"Resolve Digest: {index}/5 downloaded {len(image_paths)} photos to {news_dir}; "
                 f"initial Trim={selected_frame}-{selected_frame}"
             )
-        clip_name = options["clip_name"].strip() or None
-        update_composition(current_timeline_composition(clip_name), downloaded)
+        stage = "Обновление Fusion-композиции"
+        adapter.update_composition(comp, downloaded)
         _message(comp, "Resolve Digest", "Готово: пять новостей обновлены. Рендер запустите в Deliver вручную.")
     except Exception as error:
-        # Nothing is hidden: the exact cause is also printed in Resolve's console.
-        print(f"Resolve Digest ERROR: {error}")
-        try:
-            _message(comp, "Resolve Digest — ошибка", str(error))
-        except Exception:
-            pass
+        _report_error(comp, stage, error)
 
 
 run()

@@ -14,6 +14,38 @@ class ResolveUpdateError(RuntimeError):
     pass
 
 
+_resolve_instance = None
+
+
+def set_resolve_instance(instance):
+    """Use the object provided by the menu host without importing an API DLL."""
+    global _resolve_instance
+    _resolve_instance = instance
+
+
+def _set_input(tool, name, value):
+    if tool.SetInput(name, value) is False:
+        raise ResolveUpdateError("Fusion отклонил запись входа: " + name)
+
+
+def validate_composition(comp):
+    """Check every slot before the first write or network request."""
+    nodes = []
+    for index in range(1, 6):
+        group = []
+        for kind, expected in (("title", "TextPlus"), ("body", "TextPlus"), ("image", "Loader")):
+            name = "{}_{:02d}".format(kind, index)
+            node = _find_required(comp, name)
+            attrs = getattr(node, "GetAttrs", None)
+            if callable(attrs):
+                actual = (attrs() or {}).get("TOOLS_RegID")
+                if actual and actual != expected:
+                    raise ResolveUpdateError("Нода {} должна иметь тип {}, получен {}".format(name, expected, actual))
+            group.append(node)
+        nodes.append(group)
+    return nodes
+
+
 # A non-breaking space is supported by Text+ and is more reliable there than a
 # manual newline: Fusion may reflow text after a frame or font change.
 _RUSSIAN_PREPOSITION = re.compile(
@@ -102,7 +134,7 @@ def auto_scale_text(tool, comp, text: str) -> float | None:
     needed_height = estimated_lines * font_pixels * 1.22
     scale = min(1.0, available_height / needed_height)
     size = base_size * scale
-    tool.SetInput("Size", size)
+    _set_input(tool, "Size", size)
     return size
 
 
@@ -136,35 +168,53 @@ def _find_required(comp, node_name: str):
 
 def update_composition(comp, articles: list[DownloadedArticle]) -> None:
     """Replace five reserved node groups, leaving the Fusion graph untouched."""
-    comp.Lock()
+    if len(articles) != 5:
+        raise ResolveUpdateError("Для обновления требуется ровно пять новостей.")
+    nodes = validate_composition(comp)
+    for item in articles:
+        if not 1 <= item.article.photo_number <= item.image_count:
+            raise ResolveUpdateError("Недопустимый номер фотографии: " + str(item.article.photo_number))
+    undo_open = False
+    locked = False
     try:
+        if (callable(getattr(comp, "StartUndo", None))
+                and callable(getattr(comp, "EndUndo", None))):
+            comp.StartUndo("Resolve Digest")
+            undo_open = True
+        comp.Lock()
+        locked = True
         for index, item in enumerate(articles, start=1):
-            suffix = f"{index:02d}"
             # Keep each article's title/body/photo bound to the same numeric
             # slot.  Uppercase is intentional for the on-screen title style.
-            title = _find_required(comp, f"title_{suffix}")
-            body = _find_required(comp, f"body_{suffix}")
+            title, body, image = nodes[index - 1]
             title_text = prevent_hanging_russian_prepositions(item.article.title.upper())
             body_text = prevent_hanging_russian_prepositions(item.article.body)
-            title.SetInput("StyledText", title_text)
-            body.SetInput("StyledText", body_text)
+            _set_input(title, "StyledText", title_text)
+            _set_input(body, "StyledText", body_text)
             auto_scale_text(title, comp, title_text)
             auto_scale_text(body, comp, body_text)
-            image = _find_required(comp, f"image_{suffix}")
             # Keep every downloaded photo available as a Loader sequence.
             # Trim selects the requested frame but remains editable in Fusion.
-            image.SetInput("Clip", str(Path(item.image_path).resolve()))
+            _set_input(image, "Clip", str(Path(item.image_path).resolve()))
             frame = item.article.photo_number - 1
-            image.SetInput("ClipTimeStart", frame)
-            image.SetInput("ClipTimeEnd", frame)
+            _set_input(image, "ClipTimeStart", frame)
+            _set_input(image, "ClipTimeEnd", frame)
     finally:
-        comp.Unlock()
+        try:
+            if locked:
+                comp.Unlock()
+        finally:
+            if undo_open:
+                # Keep even a partial failed edit in a group for manual Undo.
+                comp.EndUndo(True)
 
 
 def current_project():
-    dvr = _resolve_api()
-    resolve = dvr.scriptapp("Resolve")
-    project = resolve.GetProjectManager().GetCurrentProject() if resolve else None
+    resolve = _resolve_instance
+    if resolve is None:
+        resolve = _resolve_api().scriptapp("Resolve")
+    manager = resolve.GetProjectManager() if resolve is not None else None
+    project = manager.GetCurrentProject() if manager is not None else None
     if not project:
         raise ResolveUpdateError("Open the target Resolve project first.")
     return project

@@ -64,6 +64,8 @@ def parse_docx(path: Path, expected_count: int = 5) -> list[Article]:
         body = "\n".join(body_paragraphs).strip()
         if not body:
             raise DocumentFormatError(f"No body text for: {title}")
+        if photo_number < 1:
+            raise DocumentFormatError(f"Номер фото должен быть от 1: {title}")
         articles.append(Article(title, body, url, photo_number))
         pending = []
         pending_photo_number = None

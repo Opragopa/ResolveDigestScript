@@ -48,7 +48,7 @@ def main() -> int:
         update_composition(current_timeline_composition(args.clip_name), downloaded)
         print("DONE: five title/body/image groups updated in Fusion.")
         return 0
-    except (DocumentFormatError, RuntimeError, OSError) as error:
+    except Exception as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 

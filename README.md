@@ -13,7 +13,7 @@ image_01 … image_05     # Loader с картинками
 ```
 
 `image_XX` обязательно должен быть **Loader**, а не MediaIn. Merge, анимация,
-маски и Transform остаются как есть. Скрипт меняет только эти 18 входов, а
+маски и Transform остаются как есть. Скрипт меняет текст и параметры изображения в этих 15 нодах, а
 также текстовый `Size` у Text+ при необходимости, чтобы текст поместился в
 заданный в ноде text-box (`Width` и `Height`). Базовый `Size` шаблона
 запоминается в данных ноды, поэтому при повторных запусках шрифт не
@@ -54,10 +54,10 @@ https://www.spbstu.ru/media/news/...
 
 ```text
 macOS: ~/Library/Application Support/Blackmagic Design/DaVinci Resolve/Fusion/Scripts/Utility/ResolveDigest/
-Windows: %APPDATA%\Blackmagic Design\DaVinci Resolve\Fusion\Scripts\Utility\ResolveDigest\
+Windows: %APPDATA%\Blackmagic Design\DaVinci Resolve\Support\Fusion\Scripts\Utility\ResolveDigestScript\
 ```
 
-Установите зависимости один раз в Python, которым пользуется Resolve. На macOS
+Для скрипта нужен Python 3.9 или новее (64-bit). Установите зависимости один раз в Python, которым пользуется Resolve. На macOS
 обычно проще выполнить это в Terminal после перехода в скопированную папку:
 
 ```bash
@@ -69,8 +69,12 @@ python3 -m pip install -r requirements.txt
 и выберите DOCX. Никаких аргументов в Terminal для ежедневной работы не
 требуется.
 
-В современных версиях Resolve откроется обычное системное окно выбора DOCX
-поверх программы. Изображения сохраняются на диске `Z:` в папку, вычисленную
+В Windows откроется системное окно выбора DOCX с владельцем на основном
+мониторе. Информационные сообщения и ошибки выводятся поверх окон через
+Win32 и при открытии центрируются в рабочей области основного монитора.
+Для них не нужны PySide2 и QApplication. Центрирование использует
+[SPI_GETWORKAREA](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-systemparametersinfow)
+и [HCBT_ACTIVATE](https://learn.microsoft.com/en-us/windows/win32/winmsg/cbtproc). Изображения сохраняются на диске `Z:` в папку, вычисленную
 по году создания DOCX и дню/месяцу в его имени:
 `Z:/Workspace/<год> year/Дайджест на экраны/<месяц>_<название>/<день> <месяц>/`.
 После обновления композиции автоматический рендер **не запускается**. Откройте
@@ -107,6 +111,49 @@ python -m resolve_digest.main /path/to/news.docx --cache /path/to/cache --clip-n
 ```
 
 Если имя клипа не указано, используется первая Fusion-композиция на V1.
-Для запуска из меню Resolve скопируйте папку `resolve_digest` в папку скриптов
-Resolve и запускайте `main.py` его встроенным Python; внешний Python должен
-видеть `DaVinciResolveScript`.
+Для запуска из меню используйте `ResolveDigest.py` вместе с папкой
+`resolve_digest`; `main.py` предназначен для командной строки. Внешний Python
+должен видеть `DaVinciResolveScript`.
+
+
+## Если скрипт не запускается
+
+После обновления файлов перезапустите Resolve и выберите `ResolveDigest.py`
+в меню Workspace → Scripts → Utility → ResolveDigestScript. Проверьте,
+что рядом с ним находится папка `resolve_digest`, а в проекте открыт timeline
+с нужной Fusion-композицией на V1.
+
+Ошибки поиска папки, импорта зависимостей, подключения к Resolve, чтения DOCX,
+скачивания и обновления Fusion обрабатываются общей точкой входа. Сообщение
+показывает этап, тип ошибки и путь к журналу. Полный traceback, версия Python
+и `sys.executable` записываются в `%LOCALAPPDATA%/ResolveDigest/ResolveDigest.log`.
+Если папка недоступна, используется `%TEMP%/ResolveDigest/ResolveDigest.log`;
+последний резерв — консоль Resolve.
+
+При ошибке импорта установите зависимости в тот Python, который указан в
+журнале: `"<путь к python.exe>" -m pip install -r requirements.txt`.
+Не используйте `Resolve.exe` вместо `python.exe`, если хост сообщает его в
+`sys.executable`: в таком случае выясните настроенный интерпретатор Resolve.
+Ошибки самого запуска Python до исполнения `ResolveDigest.py` скрипт перехватить
+не может. Если не появляется ни сообщения, ни журнала, откройте консоль Resolve
+и проверьте загрузку Python и выбранный пункт меню.
+
+Перед скачиванием проверяются все 15 нод и их типы (TextPlus / Loader), перед
+изменениями проверяются номера фотографий. Отказ `SetInput` считается ошибкой.
+Композиция разблокируется при исключении, правки объединяются в группу Undo
+`Resolve Digest`, если хост поддерживает StartUndo/EndUndo. При сбое посреди
+обновления уже записанные значения автоматически не откатываются: отмените
+эту группу вручную в Fusion. Скачивание файлов также не является транзакцией.
+
+Папка на Z: должна быть доступна текущему пользователю Resolve. Скрипт проверяет
+доступность диска до начала загрузки. В диалоге выбора DOCX отмена пользователем
+и ошибка PowerShell различаются; пути с кириллицей передаются в UTF-8.
+
+Проверка без Resolve в Windows PowerShell (временные файлы внутри проекта):
+
+```powershell
+$env:TEMP = Join-Path $PWD '.test-tmp'
+$env:TMP = $env:TEMP
+New-Item -ItemType Directory -Force $env:TEMP | Out-Null
+python -B -m unittest discover -s tests -v
+```
