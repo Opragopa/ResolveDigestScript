@@ -15,6 +15,12 @@ class Node:
     def __init__(self):
         self.values = {}
 
+    def __getattr__(self, key):
+        values = self.__dict__.get("values", {})
+        if key in values:
+            return values[key]
+        raise AttributeError(key)
+
     def SetInput(self, key, value):
         self.values[key] = value
 

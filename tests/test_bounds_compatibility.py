@@ -65,7 +65,7 @@ class BoundsCompatibilityTests(unittest.TestCase):
             title,body=comp.nodes[f'title_{index:02d}'],comp.nodes[f'body_{index:02d}']
             def install(expression,title=title,body=body,index=index):
                 title.Output.DataWindow={2:title.Output.GetValue(14).DataWindow[1]}
-                x,y=eval(expression,{'Point':lambda x,y:(x,y),f'title_{index:02d}':title})
+                x,y=eval(expression,{'Point':lambda x,y:(x,y),f'title_{index:02d}':title, f'body_{index:02d}':body})
                 body.values['Center']={1:x,2:y}
             body.Center.SetExpression.side_effect=install
         reflow_composition(comp,100)

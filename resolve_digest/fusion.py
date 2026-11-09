@@ -250,6 +250,27 @@ def _text_bounds(tool, frame, rendered_image=None, label=None):
         f"Fusion не вернул подходящие координаты. {details}")
 
 
+def _install_gap_control(body, gap):
+    """Expose a signed pixel gap without replacing existing custom controls."""
+    controls = dict(getattr(body, "UserControls", None) or {})
+    controls["DigestGap"] = {
+        "LINKS_Name": "Title / body gap (px)",
+        "LINKID_DataType": "Number",
+        "INPID_InputControl": "SliderControl",
+        "ICS_ControlPage": "Digest",
+        "INP_Default": gap,
+        "INP_MinScale": -500,
+        "INP_MaxScale": 1000,
+        "INP_MinAllowed": -100000,
+        "INP_MaxAllowed": 100000,
+    }
+    body.UserControls = controls
+    refresh = getattr(body, "Refresh", None)
+    if callable(refresh):
+        refresh()
+    _set_input(body, "DigestGap", gap)
+
+
 def body_layout_plan(title, body, comp, title_name, gap_pixels, sample_frame=14, photo_limits=None):
     """Measure before setting an expression; never reference body's own output.
 
@@ -284,17 +305,21 @@ def body_layout_plan(title, body, comp, title_name, gap_pixels, sample_frame=14,
     new_bottom = new_top - (body_rect[3] - body_rect[1])
     if new_bottom < 0 or new_top > body_height:
         raise ResolveUpdateError("Описание не помещается под заголовком: уменьшите Size или отступ title/body.")
-    # Only title.Output is referenced, so this creates no self-dependency.
+    # A negative gap compensates for transparent padding in Text+'s DoD.
+    # Reading a custom input on body is safe; reading body.Output is cyclic.
+    _install_gap_control(body, gap)
+    body_name = title_name.replace("title_", "body_", 1)
+    live_gap = f"{body_name}.DigestGap / {body_height:.12g}"
     expression = (
         f"Point({x:.12g}, {title_name}.Output.DataWindow[2] / "
-        f"{title_name}.Output.Height - {gap / body_height:.12g} - ({top_offset:.12g}))"
+        f"{title_name}.Output.Height - ({live_gap}) - ({top_offset:.12g}))"
     )
     if photo_limits is not None:
         bottom, top = photo_limits
         lower = (bottom + body_rect[3] - body_rect[1]) / body_height - top_offset
         upper = top / body_height - top_offset
         desired = (f"{title_name}.Output.DataWindow[2] / {title_name}.Output.Height"
-                   f" - {gap / body_height:.12g} - ({top_offset:.12g})")
+                   f" - ({live_gap}) - ({top_offset:.12g})")
         expression = f"Point({x:.12g}, min({upper:.12g}, max({lower:.12g}, {desired})))"
     return center_input, expression
 

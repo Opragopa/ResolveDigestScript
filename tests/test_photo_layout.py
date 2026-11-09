@@ -35,7 +35,7 @@ def photo_comp(title_top=2100, title_height=300, body_height=700):
         title, body = comp.nodes[f'title_{index:02d}'], comp.nodes[f'body_{index:02d}']
         def install(expression, title=title, body=body, index=index):
             title.Output.DataWindow = {2: title.Output.GetDoD(14)[1]}
-            x, y = eval(expression, {'Point': lambda x,y:(x,y), f'title_{index:02d}':title})
+            x, y = eval(expression, {'Point': lambda x,y:(x,y), f'title_{index:02d}':title, f'body_{index:02d}':body})
             body.values['Center'] = {1:x, 2:y}
         body.Center.SetExpression.side_effect=install
     return comp
@@ -47,7 +47,7 @@ class PhotoLayoutTests(unittest.TestCase):
         title, body = comp.nodes['title_01'], comp.nodes['body_01']
         _, expression = fit_photo_text_pair(comp, title, body, 1, 100)
         title.Output.DataWindow = {2: title.Output.GetDoD(14)[1]}
-        _, y = eval(expression, {'Point':lambda x,y:(x,y), 'title_01':title})
+        _, y = eval(expression, {'Point':lambda x,y:(x,y), 'title_01':title, 'body_01':body})
         body_top = 1000 + (y-.335)*2160
         self.assertLessEqual(title.Output.GetDoD(14)[3], 1900)
         self.assertGreaterEqual(body_top-700, 400)
@@ -60,7 +60,7 @@ class PhotoLayoutTests(unittest.TestCase):
         _, expression = fit_photo_text_pair(comp, title, body, 1, 300)
         self.assertLess(body.values['Size'], original)
         title.Output.DataWindow = {2:title.Output.GetDoD(14)[1]}
-        _, y=eval(expression, {'Point':lambda x,y:(x,y), 'title_01':title})
+        _, y=eval(expression, {'Point':lambda x,y:(x,y), 'title_01':title, 'body_01':body})
         top=1000+(y-.335)*2160
         measured=body.Output.GetDoD(14)
         self.assertGreaterEqual(top-(measured[3]-measured[1]),400)

@@ -45,14 +45,14 @@ class TextLayoutTests(unittest.TestCase):
         # Evaluate the generated expression independently using Fusion's shape.
         title.Output.DataWindow = {2: 1200}
         title.Output.Height = 2160
-        x, y = eval(expr, {'Point': lambda x, y: (x, y), 'title_01': title})
+        x, y = eval(expr, {'Point': lambda x, y: (x, y), 'title_01': title, 'body_01': body})
         new_body_top = 1000 + (y - .335) * 2160
         self.assertAlmostEqual(1200 - new_body_top, 20, places=7)
         self.assertEqual(x, .75)
         self.assertNotIn('body_01.Output', expr)
         # Manual changes to title height/position follow without rerunning.
         title.Output.DataWindow[2] = 1100
-        _, y2 = eval(expr, {'Point': lambda x, y: (x, y), 'title_01': title})
+        _, y2 = eval(expr, {'Point': lambda x, y: (x, y), 'title_01': title, 'body_01': body})
         self.assertAlmostEqual((y - y2) * 2160, 100)
 
     def test_all_five_expressions_are_installed_in_same_undo_group(self):
@@ -65,6 +65,28 @@ class TextLayoutTests(unittest.TestCase):
             self.assertIn(f'title_{index:02d}.Output', setter.call_args.args[0])
         self.assertFalse(comp.locked)
         comp.EndUndo.assert_called_once_with(True)
+
+    def test_gap_changes_live_and_can_compensate_for_text_box_padding(self):
+        comp = layout_comp()
+        title, body = comp.nodes['title_01'], comp.nodes['body_01']
+        body.UserControls = {'Existing': {'LINKS_Name': 'Keep me'}}
+        _, expr = body_layout_plan(title, body, comp, 'title_01', 80)
+        title.Output.DataWindow = {2: 1200}
+        title.Output.Height = 2160
+        context = {'Point': lambda x, y: (x, y), 'title_01': title, 'body_01': body}
+        _, original_y = eval(expr, context)
+        body.SetInput('DigestGap', -120)
+        _, adjusted_y = eval(expr, context)
+        self.assertAlmostEqual((adjusted_y - original_y) * 2160, 200)
+        self.assertIn('Existing', body.UserControls)
+        self.assertLess(body.UserControls['DigestGap']['INP_MinAllowed'], 0)
+        self.assertNotIn('body_01.Output', expr)
+
+    def test_gap_controls_are_independent_for_each_news(self):
+        comp = layout_comp()
+        update_composition(comp, articles(), body_gap_pixels=80)
+        comp.nodes['body_01'].SetInput('DigestGap', 15)
+        self.assertEqual(comp.nodes['body_02'].GetInput('DigestGap'), 80)
 
     def test_empty_bounds_fail_without_installing_any_expression(self):
         comp = layout_comp()
