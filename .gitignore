@@ -6,3 +6,6 @@ cache/
 venv/
 resolve_digest.local.json
 .test-tmp/
+diagnostics-relay/.wrangler/
+diagnostics-relay/.dev.vars
+diagnostics-relay/.env*

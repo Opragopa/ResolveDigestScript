@@ -24,8 +24,8 @@ class ConsoleProgress:
     def check_cancelled(self):
         pass
 
-    def finish(self, status, message, detail=""):
-        print(f"Resolve Digest — {status}: {message}\n{detail}")
+    def finish(self, status, message, detail="", output_dir="", report_path=""):
+        print(f"Resolve Digest [100%] — {status}: {message}\n{detail}\nРабота завершена.")
 
 
 class WindowsProgress(ConsoleProgress):
@@ -96,12 +96,13 @@ class WindowsProgress(ConsoleProgress):
         self._send(dict(status="working", percent=self._percent, message=message,
                         detail=detail, cancellable=cancellable))
 
-    def finish(self, status, message, detail=""):
+    def finish(self, status, message, detail="", output_dir="", report_path=""):
         if self._finished:
             return
         try:
-            self._send(dict(status=status, percent=100 if status == "success" else self._percent,
-                            message=message, detail=detail, cancellable=False))
+            self._send(dict(status=status, percent=100,
+                            message=message, detail=detail, cancellable=False,
+                            output_dir=str(output_dir), report_path=str(report_path)))
             if not self._terminal_received.wait(5):
                 raise RuntimeError("Окно прогресса не подтвердило итог операции. " + "\n".join(self._diagnostics))
             self._finished = True

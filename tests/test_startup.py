@@ -20,6 +20,7 @@ def launcher():
     scope = {'__file__': str(ENTRY), '__name__': 'launcher_test'}
     exec(compile(tree, str(ENTRY), 'exec'), scope)
     scope["_refresh_installation"] = lambda directory: False  # No network in launcher unit tests.
+    scope["_send_diagnostic"] = MagicMock(return_value='Diagnostic saved locally')
     return scope
 
 

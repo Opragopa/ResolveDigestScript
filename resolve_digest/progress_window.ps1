@@ -7,7 +7,7 @@ Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Resolve Digest'
-$form.ClientSize = New-Object System.Drawing.Size(620, 340)
+$form.ClientSize = New-Object System.Drawing.Size(620, 400)
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 10)
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
@@ -33,9 +33,30 @@ $details.ReadOnly = $true
 $details.ScrollBars = 'Vertical'
 $details.TabStop = $true
 $button = New-Object System.Windows.Forms.Button
-$button.SetBounds(440, 290, 160, 32)
+$button.SetBounds(440, 350, 160, 32)
 $button.Text = 'Отменить'
-$form.Controls.AddRange(@($heading, $bar, $percent, $details, $button))
+$nextStep = New-Object System.Windows.Forms.Label
+$nextStep.SetBounds(20, 282, 580, 54)
+$nextStep.Text = 'Дождитесь завершения обработки. Для остановки нажмите «Отменить».'
+$openFolder = New-Object System.Windows.Forms.Button
+$openFolder.SetBounds(20, 350, 175, 32)
+$openFolder.Text = 'Открыть папку'
+$openFolder.Visible = $false
+$openFolder.Add_Click({
+    if ([System.IO.Directory]::Exists($script:outputDir)) {
+        Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $script:outputDir + '"')
+    }
+})
+$openReport = New-Object System.Windows.Forms.Button
+$openReport.SetBounds(205, 350, 175, 32)
+$openReport.Text = 'Открыть журнал'
+$openReport.Visible = $false
+$openReport.Add_Click({
+    if ([System.IO.File]::Exists($script:reportPath)) {
+        Start-Process -FilePath 'notepad.exe' -ArgumentList ('"' + $script:reportPath + '"')
+    }
+})
+$form.Controls.AddRange(@($heading, $bar, $percent, $details, $nextStep, $openFolder, $openReport, $button))
 $script:finished = $false
 $script:cancelSent = $false
 $script:canCancel = $true
@@ -79,6 +100,7 @@ $timer.Add_Tick({
                     $details.Text = 'Проверьте консоль и журнал Resolve Digest.'
                     $button.Text = 'Закрыть'
                     $button.Enabled = $true
+                    $nextStep.Text = 'Программа остановлена. Проверьте журнал и нажмите «Закрыть».'
                 }
                 break
             }
@@ -94,8 +116,21 @@ $timer.Add_Tick({
                 $script:finished = $true
                 $button.Text = 'Закрыть'
                 $button.Enabled = $true
+                $form.Text = 'Resolve Digest — работа завершена'
+                $form.AcceptButton = $button
+                $form.CancelButton = $button
+                $nextStep.Text = 'Обработка завершена. Нажмите «Закрыть», чтобы вернуться в Resolve.'
+                $script:outputDir = [string]$state.output_dir
+                $script:reportPath = [string]$state.report_path
+                $openFolder.Visible = [System.IO.Directory]::Exists($script:outputDir)
+                $openReport.Visible = [System.IO.File]::Exists($script:reportPath)
                 if ($state.status -eq 'error') {
                     $heading.ForeColor = [System.Drawing.Color]::Firebrick
+                } elseif ($state.status -eq 'warning') {
+                    $heading.ForeColor = [System.Drawing.Color]::DarkOrange
+                    $nextStep.Text = 'Все загрузки обработаны. Проверьте журнал пропусков и нажмите «Закрыть».'
+                } elseif ($state.status -eq 'success') {
+                    $heading.ForeColor = [System.Drawing.Color]::DarkGreen
                 }
                 [Console]::Out.WriteLine('FINISHED')
                 [Console]::Out.Flush()
@@ -114,6 +149,7 @@ $timer.Add_Tick({
         [Console]::Out.Flush()
         $button.Text = 'Закрыть'
         $button.Enabled = $true
+        $nextStep.Text = 'Программа остановлена. Скопируйте ошибку и нажмите «Закрыть».'
     }
 })
 $form.Add_Shown({

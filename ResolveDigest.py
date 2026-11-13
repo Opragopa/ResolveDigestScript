@@ -120,6 +120,14 @@ def _message(comp, title, text):
         })
 
 
+def _send_diagnostic(stage, details):
+    try:
+        from resolve_digest.reporting import report_diagnostic
+        return report_diagnostic(stage, details, directory=_script_directory())
+    except Exception:
+        return "Автоотправка отчёта недоступна. Журнал сохранён на этом компьютере."
+
+
 def _report_error(comp, stage, error, progress=None):
     details = "{}\nPython: {}\nExecutable: {}\nStage: {}\n{}\n".format(
         datetime.now().isoformat(), sys.version, sys.executable, stage, traceback.format_exc())
@@ -143,9 +151,11 @@ def _report_error(comp, stage, error, progress=None):
     if stage == "Обновление Fusion-композиции":
         text += "\nЕсли часть правок применилась, отмените группу Resolve Digest через Undo в Fusion."
     text += "\n\nЖурнал: {}".format(log_path) if log_path else "\nПодробности — в консоли Resolve."
+    text += "\n\n" + _send_diagnostic(stage, details)
     if progress is not None:
         try:
-            progress.finish("error", "Не удалось собрать выпуск", text)
+            progress.finish("error", "Завершено с ошибкой: выпуск не собран", text,
+                            report_path=str(log_path) if log_path else "")
             return
         except Exception:
             traceback.print_exc()
@@ -277,6 +287,10 @@ def run() -> None:
         stage = "Открытие окна прогресса"
         progress = create_progress()
         progress.update(2, "Проверка проекта и шаблона Fusion")
+        from resolve_digest.reporting import retry_pending
+        retry_status = retry_pending(script_directory)
+        if retry_status:
+            print("Resolve Digest: " + retry_status)
         clip_name = options.get("clip_name", "").strip() or None
         if clip_name:
             comp = current_timeline_composition(clip_name)
@@ -312,15 +326,22 @@ def run() -> None:
             articles, cache, session=download_session, on_progress=image_progress)
         progress.check_cancelled()
         if failures:
-            progress.finish("error", "Загрузка завершена с пропусками",
-                            "Всё доступное сохранено. Fusion не обновлён.\n"
-                            + "\n\n".join(failures) + "\n\nОтчёт: " + str(report))
+            progress.update(99, "Загрузки завершены. Подготовка отчёта…", cancellable=False)
+            delivery = _send_diagnostic("Загрузка завершена с пропусками", "\n\n".join(failures))
+            progress.finish("warning", "Завершено: есть пропуски загрузки",
+                            "Сохранено фотографий: {}. Замечаний: {}.\n".format(
+                                sum(item.image_count for item in downloaded), len(failures))
+                            + "Всё доступное сохранено. Fusion не обновлён.\n"
+                            + "Проверьте отчёт и повторите запуск после устранения причин.\n\n"
+                            + "\n\n".join(failures) + "\n\nОтчёт: " + str(report) + "\n\n" + delivery,
+                            output_dir=cache, report_path=report)
             return
         stage = "Обновление Fusion-композиции"
         # Cancellation stops at this boundary: don't interrupt a partial edit.
         progress.update(95, stage, "Запись текста и изображений. Дождитесь завершения.", cancellable=False)
         adapter.update_composition(comp, downloaded, body_gap_pixels=gap, constrain_to_photo=True)
-        progress.finish("success", "Готово: пять новостей обновлены", "Рендер запустите в Deliver вручную.\nИзображения: " + str(cache))
+        progress.finish("success", "Готово: пять новостей обновлены", "Рендер запустите в Deliver вручную.\nИзображения: " + str(cache),
+                        output_dir=cache, report_path=report)
     except cancelled_errors:
         try:
             progress.finish("cancelled", "Операция отменена", "Композиция не изменена. Уже скачанные файлы остаются на диске.")

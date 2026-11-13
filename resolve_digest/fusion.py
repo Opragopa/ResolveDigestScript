@@ -305,6 +305,13 @@ def body_layout_plan(title, body, comp, title_name, gap_pixels, sample_frame=14,
     new_bottom = new_top - (body_rect[3] - body_rect[1])
     if new_bottom < 0 or new_top > body_height:
         raise ResolveUpdateError("Описание не помещается под заголовком: уменьшите Size или отступ title/body.")
+    if photo_limits is not None:
+        bottom, top = photo_limits
+        if new_bottom < bottom - 1 or new_top > top + 1:
+            raise ResolveUpdateError(
+                f"body под {title_name} не помещается в высоту фотографии при отступе {gap:g} px. "
+                "Положение title и размеры шрифтов сохранены. Уменьшите отступ, "
+                "сократите описание или вручную уменьшите Size у body.")
     # A negative gap compensates for transparent padding in Text+'s DoD.
     # Reading a custom input on body is safe; reading body.Output is cyclic.
     _install_gap_control(body, gap)
@@ -377,37 +384,9 @@ def photo_vertical_limits(comp, index, canvas_height):
 
 
 def fit_photo_text_pair(comp, title, body, index, gap):
-    """Fit both texts and requested gap within actual visible photo height."""
+    """Position only body below the fixed title, preserving both font sizes."""
     _, height = _text_frame_size(title, comp)
     bottom, top = photo_vertical_limits(comp, index, height)
-    available = top - bottom
-    if gap >= available - 2:
-        raise ResolveUpdateError(f"Отступ {gap:g} px не помещается в высоту фото {available:g} px (новость {index}).")
-    for _ in range(16):
-        tr, br = _text_bounds(title, 14), _text_bounds(body, 14)
-        th, bh = tr[3] - tr[1], br[3] - br[1]
-        total = th + gap + bh
-        if total <= available - 2:
-            break
-        # Leave room for body even when the title alone is too tall.
-        node = title if th >= (available - gap) * .65 else body
-        current = _number(_input_value(node, "Size"))
-        room = (available - gap) * .55 if node is title else available - gap - th - 2
-        measured = th if node is title else bh
-        if current is None or room <= 0:
-            raise ResolveUpdateError("Не удалось подобрать размер текста в границах фото.")
-        size = max(.004, current * min(.9, .95 * room / measured))
-        if size >= current:
-            raise ResolveUpdateError(f"Текст новости {index} не помещается даже при минимальном Size. Уменьшите отступ.")
-        _set_input(node, "Size", size)
-    else:
-        raise ResolveUpdateError(f"Не удалось вписать текст новости {index} в высоту фотографии.")
-    # Preserve the title position where possible; move the whole block only
-    # as far as needed to stay inside the photograph.
-    x, y = _components(_at(title, "Center", 14), 2)
-    new_top = min(top - 1, max(tr[3], bottom + 1 + total))
-    if abs(new_top - tr[3]) > 1e-8:
-        _set_input(title, "Center", {1: x, 2: y + (new_top - tr[3]) / height})
     return body_layout_plan(title, body, comp, f"title_{index:02d}", gap,
                             photo_limits=(bottom, top))
 
@@ -423,7 +402,7 @@ def _verify_photo_layout(comp, nodes, gap):
         _, height = _text_frame_size(title, comp)
         bottom, top = photo_vertical_limits(comp, index, height)
         tr, br = _text_bounds(title, 14), _text_bounds(body, 14)
-        if tr[3] > top + 1 or br[1] < bottom - 1 or abs(tr[1] - br[3] - gap) > 2:
+        if br[3] > top + 1 or br[1] < bottom - 1 or abs(tr[1] - br[3] - gap) > 2:
             raise ResolveUpdateError(
                 f"Fusion не подтвердил отступ/границы текста в новости {index}. "
                 "Проверьте выражения Center и отмените группу верстки через Undo.")
@@ -439,9 +418,6 @@ def reflow_composition(comp, gap_pixels=80.):
         if callable(getattr(comp, "StartUndo", None)) and callable(getattr(comp, "EndUndo", None)):
             comp.StartUndo("Resolve Digest — верстка")
             started = True
-        for title, body, _ in nodes:
-            for node in (title, body):
-                auto_scale_text(node, comp, str(_input_value(node, "StyledText") or ""))
         plans = _layout_plans(comp, nodes, gap, True)
         for center, expression in plans:
             if center.SetExpression(expression) is False:
@@ -510,8 +486,6 @@ def update_composition(comp, articles: list[DownloadedArticle], body_gap_pixels=
             body_text = prevent_hanging_russian_prepositions(item.article.body)
             _set_input(title, "StyledText", title_text)
             _set_input(body, "StyledText", body_text)
-            auto_scale_text(title, comp, title_text)
-            auto_scale_text(body, comp, body_text)
             # Keep every downloaded photo available as a Loader sequence.
             # Trim selects the requested frame but remains editable in Fusion.
             _set_input(image, "Clip", str(Path(item.image_path).resolve()))

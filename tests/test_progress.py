@@ -64,7 +64,7 @@ class ProgressTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'nt', 'Real WinForms protocol')
     def test_real_window_acknowledges_error_then_success_state(self):
         # No Resolve API or network is used. Dispose this test's child process.
-        for status in ('error', 'success', 'cancelled'):
+        for status in ('error', 'warning', 'success', 'cancelled'):
             with self.subTest(status=status):
                 progress = WindowsProgress()
                 try:
@@ -121,8 +121,22 @@ class ProgressWorkflowTests(unittest.TestCase):
         progress, update, report = self.run_workflow(ImageExtractionError('HTTP 403'))
         update.assert_not_called()
         report.assert_not_called()
-        self.assertEqual(progress.finish.call_args.args[0], 'error')
+        self.assertEqual(progress.finish.call_args.args[0], 'warning')
         detail = progress.finish.call_args.args[2]
         self.assertIn('download_report.txt', detail)
         self.assertIn('HTTP 403', detail)
         self.assertIn('Новость 5', detail)
+
+    def test_every_terminal_result_reaches_100_and_passes_paths(self):
+        for status in ('success', 'warning', 'error', 'cancelled'):
+            progress = ProgressTests().controller()
+            progress._terminal_received = threading.Event()
+            progress._terminal_received.set()
+            progress._diagnostics = []
+            with patch.object(progress, '_send') as send:
+                progress.finish(status, 'Finished', output_dir='cache', report_path='report.txt')
+            state = send.call_args.args[0]
+            self.assertEqual(state['percent'], 100)
+            self.assertFalse(state['cancellable'])
+            self.assertEqual(state['output_dir'], 'cache')
+            self.assertEqual(state['report_path'], 'report.txt')

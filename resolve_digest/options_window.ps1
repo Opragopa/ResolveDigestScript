@@ -53,7 +53,7 @@ $update.Text = 'Проверять обновления с GitHub при зап�
 $update.SetBounds(20, 185, 600, 28)
 $update.Checked = [bool]$prefs.auto_update
 $help = New-Object System.Windows.Forms.Label
-$help.Text = 'Текст останется между верхним и нижним краями фото. Если места не хватит, размер шрифта будет уменьшен.'
+$help.Text = 'Заголовки и размеры шрифтов сохраняются. Под заголовком перемещается только body с выбранным отступом.'
 $help.SetBounds(20, 230, 600, 48)
 $version = New-Object System.Windows.Forms.Label
 $version.Text = [string]$prefs.update_status
