@@ -25,29 +25,53 @@ class PreferenceTests(unittest.TestCase):
                 self.assertIsNone(ask_windows_options(folder))
             self.assertEqual(load_preferences(folder)['body_gap_pixels'],140)
 
+    def test_manual_check_preserves_options_without_persisting_action(self):
+        with tempfile.TemporaryDirectory() as folder:
+            values = {'action': 'check_updates', 'docx': '', 'body_gap_pixels': 120, 'auto_update': False}
+            with patch('subprocess.run', return_value=subprocess.CompletedProcess([], 0, json.dumps(values), '')):
+                options = ask_windows_options(folder)
+            self.assertEqual(options['action'], 'check_updates')
+            saved = load_preferences(folder)
+            self.assertNotIn('action', saved)
+            self.assertEqual(saved['body_gap_pixels'], 120)
+            self.assertFalse(saved['auto_update'])
+
 
 class UpdaterTests(unittest.TestCase):
     def result(self,text='',code=0):
         return subprocess.CompletedProcess([],code,text,'failure' if code else '')
 
-    def test_dirty_checkout_is_not_fetched_or_overwritten(self):
+    def test_dirty_checkout_checks_remote_without_overwriting(self):
         with tempfile.TemporaryDirectory() as folder:
-            responses=[str(Path(folder).resolve()),'main','https://github.com/Opragopa/ResolveDigestScript',' M ResolveDigest.py']
+            responses=[str(Path(folder).resolve()),'main','https://github.com/Opragopa/ResolveDigestScript',
+                       'aaa','','bbb',' M ResolveDigest.py']
             with patch('subprocess.run',side_effect=[self.result(r) for r in responses]) as run:
                 updated,message=update_checkout(folder)
             self.assertFalse(updated)
             self.assertIn('локальные',message)
-            self.assertFalse(any('fetch' in c.args[0] for c in run.call_args_list))
+            self.assertIn('bbb', message)
+            self.assertTrue(any('fetch' in c.args[0] for c in run.call_args_list))
+            self.assertFalse(any('merge' in c.args[0] for c in run.call_args_list))
 
     def test_clean_update_is_fast_forward_only(self):
         with tempfile.TemporaryDirectory() as folder:
-            responses=[str(Path(folder).resolve()),'main','https://github.com/Opragopa/ResolveDigestScript','','aaa','','','bbb']
+            responses=[str(Path(folder).resolve()),'main','https://github.com/Opragopa/ResolveDigestScript','aaa','','bbb','','','bbb']
             with patch('subprocess.run',side_effect=[self.result(r) for r in responses]) as run:
                 updated,message=update_checkout(folder)
             self.assertTrue(updated)
             commands=[c.args[0] for c in run.call_args_list]
             self.assertTrue(any('--ff-only' in c for c in commands))
             self.assertFalse(any('reset' in c for c in commands))
+
+    def test_current_version_is_reported_without_merge(self):
+        with tempfile.TemporaryDirectory() as folder:
+            responses = [str(Path(folder).resolve()), 'main', 'https://github.com/Opragopa/ResolveDigestScript',
+                         'aaa', '', 'aaa']
+            with patch('subprocess.run', side_effect=[self.result(r) for r in responses]) as run:
+                updated, message = update_checkout(folder)
+            self.assertFalse(updated)
+            self.assertIn('последняя версия', message)
+            self.assertFalse(any('merge' in c.args[0] for c in run.call_args_list))
 
     def test_offline_update_preserves_installed_version(self):
         with patch('subprocess.run',side_effect=OSError('offline')):
@@ -56,6 +80,24 @@ class UpdaterTests(unittest.TestCase):
         self.assertIn('установленная',message)
 
 class LayoutOnlyWorkflowTests(unittest.TestCase):
+    def test_manual_check_forces_refresh_and_reopens_options(self):
+        from test_startup import launcher
+        from test_fusion import Composition
+        from resolve_digest import fusion
+        from unittest.mock import MagicMock
+        scope = launcher()
+        refresh = MagicMock(return_value=False)
+        options = MagicMock(side_effect=[{'action': 'check_updates', 'auto_update': False}, None])
+        scope.update(_refresh_installation=refresh, _ask_options=options, _report_error=MagicMock())
+        with patch.object(fusion, 'current_timeline_composition', return_value=Composition()), \
+             patch.object(fusion, 'update_composition') as update:
+            scope['run']()
+        self.assertEqual(options.call_count, 2)
+        self.assertEqual(refresh.call_count, 2)
+        self.assertTrue(refresh.call_args.kwargs['force'])
+        update.assert_not_called()
+        scope['_report_error'].assert_not_called()
+
     def test_layout_only_uses_saved_gap_without_docx_or_network(self):
         from test_startup import launcher
         from test_fusion import Composition

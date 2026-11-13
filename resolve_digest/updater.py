@@ -24,12 +24,16 @@ def update_checkout(directory):
         remote = git("remote", "get-url", "origin").rstrip("/").removesuffix(".git")
         if remote not in ("https://github.com/Opragopa/ResolveDigestScript", "git@github.com:Opragopa/ResolveDigestScript"):
             return False, "Автообновление пропущено: origin отличается от ResolveDigestScript."
-        if git("status", "--porcelain", "--untracked-files=normal"):
-            return False, "Автообновление пропущено: в установке есть локальные изменения или новые файлы."
         before = git("rev-parse", "HEAD")
         git("fetch", "--quiet", "origin", "main")
+        remote_head = git("rev-parse", "origin/main")
+        if before == remote_head:
+            return False, "Установлена последняя версия Resolve Digest: " + before[:7]
+        if git("status", "--porcelain", "--untracked-files=normal"):
+            return False, ("Версия на GitHub: " + remote_head[:7] + "; установлена: " + before[:7]
+                           + ". Обновление не установлено: есть локальные изменения или новые файлы.")
         git("merge", "--ff-only", "--no-edit", "origin/main")
         after = git("rev-parse", "HEAD")
-        return before != after, "Версия Resolve Digest: " + after[:7]
+        return before != after, "Resolve Digest обновлён до версии: " + after[:7]
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         return False, "Автообновление недоступно; используется установленная версия. " + str(error)

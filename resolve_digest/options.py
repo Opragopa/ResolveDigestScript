@@ -37,6 +37,9 @@ def ask_windows_options(directory, update_status=""):
     if not result.stdout.strip():
         return None
     options = json.loads(result.stdout)
+    action = options.pop("action", None)
     path = Path(directory) / "resolve_digest.local.json"
     path.write_text(json.dumps(options, ensure_ascii=False, indent=2), encoding="utf-8")
+    if action:
+        options["action"] = action
     return options

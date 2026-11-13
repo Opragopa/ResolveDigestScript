@@ -203,7 +203,7 @@ def _ask_options(comp):
     })
 
 
-def _refresh_installation(directory):
+def _refresh_installation(directory, force=False):
     # Resolve keeps imported modules alive between menu launches. Drop cached
     # package objects so the next run uses the files now installed on disk.
     import importlib
@@ -215,7 +215,7 @@ def _refresh_installation(directory):
     skip = globals().pop("_DIGEST_SKIP_UPDATE", False)
     if skip:
         return False
-    if not load_preferences(directory).get("auto_update", True):
+    if not force and not load_preferences(directory).get("auto_update", True):
         globals()["_DIGEST_UPDATE_STATUS"] = "Автообновление отключено."
         return False
     from resolve_digest.updater import update_checkout
@@ -252,10 +252,9 @@ def run() -> None:
         cancelled_errors = (ProgressCancelled,)
         stage = "Загрузка модулей и зависимостей"
         import requests
-        from resolve_digest.article_images import download_all_article_images
+        from resolve_digest.downloads import download_digest
         from resolve_digest.docx_parser import parse_docx
         from resolve_digest import fusion as adapter
-        from resolve_digest.models import DownloadedArticle
         from resolve_digest.output import digest_output_directory
         host = globals().get("resolve")
         if host is None:
@@ -268,6 +267,11 @@ def run() -> None:
         comp = current_timeline_composition()
         stage = "Настройки выпуска"
         options = _ask_options(comp)
+        while options and options.get("action") == "check_updates":
+            stage = "Проверка обновлений"
+            if _refresh_installation(script_directory, force=True):
+                return
+            options = _ask_options(comp)
         if not options:
             return
         stage = "Открытие окна прогресса"
@@ -297,32 +301,21 @@ def run() -> None:
         if os.name == "nt" and not Path(cache.anchor).exists():
             raise RuntimeError("Диск сохранения недоступен: " + cache.anchor)
         cache.mkdir(parents=True, exist_ok=True)
-        downloaded = []
         download_session = requests.Session()
         download_session.trust_env = False
-        for index, article in enumerate(articles, start=1):
-            stage = "Загрузка новости {}/5: {}".format(index, article.url)
-            def image_progress(done, total, message):
-                fraction = done / total if total else 0
-                percent = 10 + ((index - 1 + fraction) / len(articles)) * 80
-                progress.update(percent, "Новость {}/{}: {}".format(index, len(articles), message),
-                                article.title + "\n" + article.url)
-            news_dir = cache / f"news_{index:02d}"
-            image_paths, image_urls = download_all_article_images(
-                article.url, news_dir, session=download_session, on_progress=image_progress)
-            selected_frame = article.photo_number - 1
-            if selected_frame >= len(image_paths):
-                raise RuntimeError(
-                    f"Requested photo #{article.photo_number}, but the article contains only "
-                    f"{len(image_paths)} photos: {article.url}"
-                )
-            downloaded.append(
-                DownloadedArticle(article, image_paths[0], image_urls[0], len(image_paths))
-            )
-            print(
-                f"Resolve Digest: {index}/5 downloaded {len(image_paths)} photos to {news_dir}; "
-                f"initial Trim={selected_frame}-{selected_frame}"
-            )
+        def image_progress(index, article, done, total, message):
+            fraction = done / total if total else 0
+            percent = 10 + ((index - 1 + fraction) / len(articles)) * 80
+            progress.update(percent, "Новость {}/{}: {}".format(index, len(articles), message),
+                            article.title + "\n" + article.url)
+        downloaded, failures, report = download_digest(
+            articles, cache, session=download_session, on_progress=image_progress)
+        progress.check_cancelled()
+        if failures:
+            progress.finish("error", "Загрузка завершена с пропусками",
+                            "Всё доступное сохранено. Fusion не обновлён.\n"
+                            + "\n\n".join(failures) + "\n\nОтчёт: " + str(report))
+            return
         stage = "Обновление Fusion-композиции"
         # Cancellation stops at this boundary: don't interrupt a partial edit.
         progress.update(95, stage, "Запись текста и изображений. Дождитесь завершения.", cancellable=False)

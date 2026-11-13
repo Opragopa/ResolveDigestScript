@@ -8,7 +8,7 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Resolve Digest — настройки выпуска'
-$form.ClientSize = New-Object System.Drawing.Size(640, 410)
+$form.ClientSize = New-Object System.Drawing.Size(640, 450)
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 10)
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
@@ -57,14 +57,22 @@ $help.Text = 'Текст останется между верхним и ниж�
 $help.SetBounds(20, 230, 600, 48)
 $version = New-Object System.Windows.Forms.Label
 $version.Text = [string]$prefs.update_status
-$version.SetBounds(20, 285, 600, 58)
+$version.SetBounds(20, 320, 600, 68)
 $version.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+$check = New-Object System.Windows.Forms.Button
+$check.Text = 'Проверить обновления'
+$check.SetBounds(20, 282, 220, 32)
+$check.Add_Click({
+    $script:result = @{action='check_updates'; docx=$path.Text; clip_name=''; body_gap_pixels=[double]$gap.Value; layout_only=$only.Checked; auto_update=$update.Checked}
+    $form.DialogResult = 'OK'
+    $form.Close()
+})
 $start = New-Object System.Windows.Forms.Button
 $start.Text = 'Применить'
-$start.SetBounds(370, 360, 120, 32)
+$start.SetBounds(370, 402, 120, 32)
 $cancel = New-Object System.Windows.Forms.Button
 $cancel.Text = 'Отмена'
-$cancel.SetBounds(500, 360, 120, 32)
+$cancel.SetBounds(500, 402, 120, 32)
 $cancel.DialogResult = 'Cancel'
 $form.CancelButton = $cancel
 $start.Add_Click({
@@ -76,7 +84,7 @@ $start.Add_Click({
     $form.DialogResult = 'OK'
     $form.Close()
 })
-$form.Controls.AddRange(@($label, $path, $browse, $gapLabel, $gap, $only, $update, $help, $version, $start, $cancel))
+$form.Controls.AddRange(@($label, $path, $browse, $gapLabel, $gap, $only, $update, $help, $check, $version, $start, $cancel))
 try {
     if ($form.ShowDialog() -eq 'OK') { [Console]::Out.Write(($script:result | ConvertTo-Json -Compress)) }
 } finally { $form.Dispose() }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import time
 from urllib.parse import urljoin, urlparse
 
@@ -33,7 +34,10 @@ def _get(client, url, *, label, notify=None, referer=None):
             response.raise_for_status()
             return response
         except requests.exceptions.SSLError as error:
-            raise ImageExtractionError(f"Ошибка проверки HTTPS-сертификата: {url}") from error
+            if "CERTIFICATE_VERIFY_FAILED" in str(error).upper():
+                raise ImageExtractionError(f"Ошибка проверки HTTPS-сертификата: {url}") from error
+            failure = error
+            reason = "Обрыв защищённого HTTPS-соединения"
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as error:
             failure = error
             reason = "Сервер не ответил вовремя или соединение прервалось"
@@ -52,6 +56,8 @@ def _get(client, url, *, label, notify=None, referer=None):
                 delay = min(30, max(delay, float(response.headers.get("Retry-After", 0))))
             except (TypeError, ValueError):
                 pass
+        except requests.exceptions.RequestException as error:
+            raise ImageExtractionError(f"Ошибка загрузки: {url}: {error}") from error
         if response is not None:
             response.close()
         if attempt == MAX_ATTEMPTS:
@@ -87,35 +93,89 @@ def _image_url(image, page_url: str) -> str | None:
         candidate = urljoin(page_url, link["href"])
         if _is_image_url(candidate):
             return candidate
-    for attribute in ("data-original", "data-src", "data-lazy-src", "src"):
+    for attribute in ("data-original", "data-src", "data-lazy-src"):
         if image.get(attribute):
             return urljoin(page_url, image[attribute])
+    picture = image.find_parent("picture")
+    source = picture.find("source", srcset=True) if picture else None
+    srcset = image.get("data-srcset") or image.get("srcset") or (source.get("srcset") if source else None)
+    if srcset:
+        def size(item):
+            parts = item.strip().split()
+            try:
+                return float(parts[1][:-1]) if len(parts) > 1 else 0
+            except ValueError:
+                return 0
+        return urljoin(page_url, max(srcset.split(","), key=size).strip().split()[0])
+    if image.get("src"):
+        return urljoin(page_url, image["src"])
     return None
 
 
 def article_image_urls(article_url: str, session: requests.Session | None = None,
                        on_status=None) -> list[str]:
-    """Extract unique content images, preserving their visual order.
-
-    The selectors intentionally prefer SPbPU article containers and only fall
-    back to ``article``.  This prevents site chrome/logo images being counted.
-    """
+    """Extract editorial images from article containers, then structured metadata."""
     client = _client(session)
     response = _get(client, article_url, label="Открытие статьи", notify=on_status)
-    soup = BeautifulSoup(response.text, "html.parser")
-    container = soup.select_one(
-        ".news-detail, .news-detail__content, .detail-text, .news-item-detail, article"
-    )
+    try:
+        soup = BeautifulSoup(response.text, "html.parser")
+        page_url = response.url if isinstance(response.url, str) and response.url else article_url
+    finally:
+        response.close()
+    container = None
+    for selector in (".news-detail", ".news-detail__content", ".detail-text", ".news-item-detail",
+                     "[itemprop='articleBody']", ".article_content", ".article-content", ".article-body", ".entry-content",
+                     ".post-content", ".news-content", "article", "main", "[role='main']"):
+        candidate = soup.select_one(selector)
+        if candidate and candidate.find("img"):
+            container = candidate
+            break
     if container is None:
-        raise ImageExtractionError(f"Could not locate the article body: {article_url}")
+        heading = soup.find("h1")
+        if heading:
+            for parent in heading.parents:
+                if parent.name in ("body", "html", "[document]"):
+                    break
+                if parent.find("img") and parent.find("p"):
+                    container = parent
+                    break
 
     urls: list[str] = []
-    for image in container.find_all("img"):
-        candidate = _image_url(image, article_url)
-        if candidate and candidate not in urls:
+    for image in container.find_all("img") if container else []:
+        if image.find_parent(["nav", "header", "footer", "aside"]):
+            continue
+        candidate = _image_url(image, page_url)
+        if candidate and urlparse(candidate).scheme in ("http", "https") and candidate not in urls:
             urls.append(candidate)
     if not urls:
-        raise ImageExtractionError(f"No article images found: {article_url}")
+        def structured_images(value):
+            if isinstance(value, list):
+                for item in value:
+                    structured_images(item)
+            elif isinstance(value, dict):
+                types = value.get("@type", [])
+                types = [types] if isinstance(types, str) else types
+                if any(t in ("Article", "NewsArticle", "BlogPosting", "ReportageNewsArticle") for t in types):
+                    images = value.get("image", [])
+                    for item in images if isinstance(images, list) else [images]:
+                        raw = (item.get("url") or item.get("contentUrl")) if isinstance(item, dict) else item
+                        if isinstance(raw, str):
+                            candidate = urljoin(page_url, raw)
+                            if urlparse(candidate).scheme in ("http", "https") and candidate not in urls:
+                                urls.append(candidate)
+                structured_images(value.get("@graph", []))
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                structured_images(json.loads(script.string or script.get_text()))
+            except (ValueError, TypeError):
+                continue
+    if not urls:
+        for meta in soup.select('meta[property="og:image"], meta[name="twitter:image"]'):
+            candidate = urljoin(page_url, meta.get("content", ""))
+            if meta.get("content") and urlparse(candidate).scheme in ("http", "https") and candidate not in urls:
+                urls.append(candidate)
+    if not urls:
+        raise ImageExtractionError(f"Не найдены фотографии статьи (возможно, сайт загружает их через JavaScript): {article_url}")
     return urls
 
 
@@ -141,7 +201,7 @@ def download_article_image(article_url: str, photo_number: int, destination: Pat
 
 def download_all_article_images(article_url: str, destination_dir: Path,
                                 session: requests.Session | None = None,
-                                on_progress=None) -> tuple[list[Path], list[str]]:
+                                on_progress=None, on_error=None) -> tuple[list[Path], list[str]]:
     """Download every content image as one zero-based Loader sequence.
 
     Each article gets its own directory so Fusion cannot combine images from
@@ -164,22 +224,36 @@ def download_all_article_images(article_url: str, destination_dir: Path,
             stale.unlink()
 
     paths: list[Path] = []
+    saved_urls: list[str] = []
     for frame, image_url in enumerate(urls, start=1):
         if on_progress:
             on_progress(frame - 1, len(urls), f"Загрузка фото {frame}/{len(urls)}")
         def image_status(message):
             if on_progress:
                 on_progress(frame - 1, len(urls), message)
-        response = _get(client, image_url, label=f"Загрузка фото {frame}/{len(urls)}",
-                        notify=image_status, referer=article_url)
-        content_type = response.headers.get("Content-Type", "").lower()
-        if content_type and not content_type.startswith("image/"):
-            raise ImageExtractionError(f"Selected URL is not an image ({content_type}): {image_url}")
+        try:
+            response = _get(client, image_url, label=f"Загрузка фото {frame}/{len(urls)}",
+                            notify=image_status, referer=article_url)
+            try:
+                content_type = response.headers.get("Content-Type", "").lower()
+                if content_type and not content_type.startswith("image/"):
+                    raise ImageExtractionError(f"Адрес вернул не изображение ({content_type}): {image_url}")
+                content = response.content
+                if not content:
+                    raise ImageExtractionError(f"Пустой файл изображения: {image_url}")
+            finally:
+                close = getattr(response, "close", None)
+                if close:
+                    close()
+            path = destination_dir / f"photo_{frame:02d}.jpg"
+            path.write_bytes(content)
+            paths.append(path)
+            saved_urls.append(image_url)
+        except (ImageExtractionError, OSError) as error:
+            if on_error:
+                on_error(frame, image_url, str(error))
+            else:
+                print(f"Не скачано фото {frame}: {image_url}: {error}")
         if on_progress:
-            on_progress(frame - 1, len(urls), f"Сохранение фото {frame}/{len(urls)}")
-        path = destination_dir / f"photo_{frame:02d}.jpg"
-        path.write_bytes(response.content)
-        paths.append(path)
-        if on_progress:
-            on_progress(frame, len(urls), f"Сохранено фото {frame}/{len(urls)}")
-    return paths, urls
+            on_progress(frame, len(urls), f"Обработано фото {frame}/{len(urls)}; сохранено: {len(paths)}")
+    return paths, saved_urls

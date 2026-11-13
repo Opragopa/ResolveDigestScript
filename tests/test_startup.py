@@ -39,7 +39,7 @@ class StartupTests(unittest.TestCase):
     def test_import_failure_is_reported(self):
         original = builtins.__import__
         def importing(name, *args, **kwargs):
-            if name == 'resolve_digest.article_images':
+            if name == 'resolve_digest.downloads':
                 raise ImportError('requests missing')
             return original(name, *args, **kwargs)
         report = MagicMock()

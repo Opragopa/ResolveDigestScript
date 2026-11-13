@@ -115,3 +115,14 @@ class ProgressWorkflowTests(unittest.TestCase):
         update.assert_not_called()
         self.assertIs(report.call_args.args[3], progress)
         self.assertIn('server unavailable', str(report.call_args.args[2]))
+
+    def test_unavailable_articles_finish_with_missing_download_report(self):
+        from resolve_digest.article_images import ImageExtractionError
+        progress, update, report = self.run_workflow(ImageExtractionError('HTTP 403'))
+        update.assert_not_called()
+        report.assert_not_called()
+        self.assertEqual(progress.finish.call_args.args[0], 'error')
+        detail = progress.finish.call_args.args[2]
+        self.assertIn('download_report.txt', detail)
+        self.assertIn('HTTP 403', detail)
+        self.assertIn('Новость 5', detail)
